@@ -8,7 +8,7 @@ use sope::{
     collective::{gatherv_full_vec, gatherv_vec},
     comm::WorldComm,
     cond_println, ensure_eq,
-    reduction::{all_of, all_same, any_of},
+    reduction::{all_of, any_of},
     shift::right_shift,
     sort::{
         bitonic_sort, is_sorted, is_sorted_by, sort, sort_by, stable_sort_by,
