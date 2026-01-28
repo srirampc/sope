@@ -10,6 +10,7 @@
 pub mod collective;
 
 /// Interface to Comm objects
+pub mod bcast;
 pub mod comm;
 pub mod distribution;
 pub mod log;
