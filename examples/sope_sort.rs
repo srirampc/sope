@@ -52,9 +52,9 @@ fn test_bitonic_sort(c: &WorldComm) -> Result<()> {
 
     let last = v.last().unwrap_or(&0);
     let prev = right_shift(last, &c.comm);
-    let ind = all_of(c.is_root() || prev <= v[0], &c.comm);
+    let ind = all_of(c.is_root() || prev.is_some_and(|pv| pv <= v[0]), &c.comm);
     if c.rank > 0 {
-        sope::ensure!(prev <= v[0]);
+        sope::ensure!(prev.is_some_and(|pv| pv <= v[0]));
     }
     if !ind {
         return Ok(());

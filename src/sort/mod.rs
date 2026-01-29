@@ -33,17 +33,21 @@ where
     T: Equivalence + Default + Clone,
     F: Fn(&T, &T) -> bool,
 {
-    let mut bsorted = s_slice.is_sorted_by(&compare);
+    let bsorted = s_slice.is_sorted_by(&compare);
     if comm.size() == 1 {
         return Ok(bsorted);
     }
     let lval = s_slice.last().ok_or(Error::MissingLastError)?;
     let fval = s_slice.first().ok_or(Error::MissingFirstError)?;
     let prev = right_shift(lval, comm);
-    if comm.rank() > 0 {
-        bsorted = bsorted && compare(&prev, fval);
-    }
-    Ok(all_of(bsorted, comm))
+    Ok(all_of(
+        if comm.rank() > 0 {
+            bsorted && prev.is_some_and(|prev| compare(&prev, fval))
+        } else {
+            bsorted
+        },
+        comm,
+    ))
 }
 
 pub fn is_sorted<T>(s_slice: &[T], comm: &dyn Communicator) -> Result<bool>

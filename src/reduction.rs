@@ -115,7 +115,7 @@ where
     T: Eq + Equivalence + Clone + Default,
 {
     let y = right_shift(x, comm);
-    let same = (comm.rank() == 0) || (y == *x);
+    let same = (comm.rank() == 0) || (y.is_some_and(|sv| sv == *x));
     all_of(same, comm)
 }
 
