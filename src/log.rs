@@ -29,9 +29,9 @@ macro_rules! cond_eprintln {
 #[macro_export]
 macro_rules! cond_info {
     ($cond_expr: expr; $($args:tt)* ) => {
-        if log::log_enabled!(log::Level::Info) {
+        if ::log::log_enabled!(log::Level::Info) {
             if $cond_expr {
-                log::info!($($args)*)
+                ::log::info!($($args)*)
             }
         }
     };
@@ -40,9 +40,9 @@ macro_rules! cond_info {
 #[macro_export]
 macro_rules! cond_error {
     ($cond_expr: expr; $($args:tt)* ) => {
-        if log::log_enabled!( log::Level::Error) {
+        if ::log::log_enabled!( log::Level::Error) {
             if $cond_expr {
-                log::error!($($args)*)
+                ::log::error!($($args)*)
             }
         }
     };
@@ -51,9 +51,9 @@ macro_rules! cond_error {
 #[macro_export]
 macro_rules! cond_debug {
     ($cond_expr: expr; $($args:tt)* ) => {
-        if log::log_enabled!(log::Level::Debug) {
+        if ::log::log_enabled!(log::Level::Debug) {
             if $cond_expr {
-                log::debug!($($args)*)
+                ::log::debug!($($args)*)
             }
         }
     };
@@ -62,9 +62,9 @@ macro_rules! cond_debug {
 #[macro_export]
 macro_rules! cond_warn {
     ($cond_expr: expr; $($args:tt)* ) => {
-        if log::log_enabled!(log::Level::Warn) {
+        if ::log::log_enabled!(log::Level::Warn) {
             if $cond_expr {
-                log::warn!($($args)*)
+                ::log::warn!($($args)*)
             }
         }
     };
@@ -75,29 +75,29 @@ macro_rules! gather_format_vec {
     ($comm_expr: expr; $($args:tt)* ) => {{
         let frs = format!($($args)*);
         let s = if frs.len() > 0 {
-            use mpi::topology::Communicator;
+            use ::mpi::topology::Communicator;
             format!(
                 "[{}::{}] {}", ($comm_expr).rank(),
-                chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
+                ::chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
                 frs
             )
         } else {
             frs
         };
-        sope::collective::gather_strings(s, 0, ($comm_expr))
+        $crate::collective::gather_strings(s, 0, ($comm_expr))
     }};
 }
 
 #[macro_export]
 macro_rules! log_gather_format_vec {
     ($comm_expr: expr; $log_level: expr; $($args:tt)* ) => {
-        if log::log_enabled!($log_level) {
-            match sope::gather_format_vec!($comm_expr; $($args)*) {
-                anyhow::Result::Ok(g_in) => {
+        if ::log::log_enabled!($log_level) {
+            match $crate::gather_format_vec!($comm_expr; $($args)*) {
+                ::anyhow::Result::Ok(g_in) => {
                     g_in
                 }
-                anyhow::Result::Err(err) => {
-                    use mpi::traits::Communicator;
+                ::anyhow::Result::Err(err) => {
+                    use ::mpi::traits::Communicator;
                     if ($comm_expr).rank() == 0 {
                         Some(vec![err.to_string()])
                     } else {
@@ -114,11 +114,11 @@ macro_rules! log_gather_format_vec {
 #[macro_export]
 macro_rules! gather_format {
     ($comm_expr: expr; $($args:tt)* ) => {
-        match sope::gather_format_vec!($comm_expr; $($args)*) {
-            anyhow::Result::Ok(rsv) => {
+        match $crate::gather_format_vec!($comm_expr; $($args)*) {
+            ::anyhow::Result::Ok(rsv) => {
                 rsv.map(|sv| sv.join("\n"))
             }
-            anyhow::Result::Err(err) => {
+            ::anyhow::Result::Err(err) => {
                 Some(err.to_string())
             }
         }
@@ -128,7 +128,7 @@ macro_rules! gather_format {
 #[macro_export]
 macro_rules! gather_println {
     ($comm_expr: expr; $($args:tt)* ) => {
-        if let Some(fs) = sope::gather_format!($comm_expr; $($args)*) {
+        if let Some(fs) = $crate::gather_format!($comm_expr; $($args)*) {
             eprintln!("{:?}", fs);
         }
     };
@@ -137,7 +137,7 @@ macro_rules! gather_println {
 #[macro_export]
 macro_rules! gather_eprintln {
     ($comm_expr: expr;$($args:tt)* ) => {
-        if let fs = sope::gather_format!($comm_expr; $($args)*) {
+        if let fs = $crate::gather_format!($comm_expr; $($args)*) {
             eprintln!("{:?}", fs);
         }
     };
@@ -146,11 +146,11 @@ macro_rules! gather_eprintln {
 #[macro_export]
 macro_rules! gather_info {
     ($comm_expr: expr; $($args:tt)* ) => {
-        if let Some(fsv) = sope::log_gather_format_vec!(
-            $comm_expr; log::Level::Info; $($args)*
+        if let Some(fsv) = $crate::log_gather_format_vec!(
+            $comm_expr; ::log::Level::Info; $($args)*
         ) {
             for fs in fsv {
-                log::info!("{}", fs);
+                ::log::info!("{}", fs);
             }
         }
     }
