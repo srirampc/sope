@@ -116,10 +116,10 @@ macro_rules! gather_format {
     ($comm_expr: expr; $($args:tt)* ) => {
         match $crate::gather_format_vec!($comm_expr; $($args)*) {
             ::anyhow::Result::Ok(rsv) => {
-                rsv.map(|sv| sv.join("\n"))
+                rsv.unwrap_or(vec![])
             }
             ::anyhow::Result::Err(err) => {
-                Some(err.to_string())
+                vec![err.to_string()]
             }
         }
     };
@@ -128,8 +128,8 @@ macro_rules! gather_format {
 #[macro_export]
 macro_rules! gather_println {
     ($comm_expr: expr; $($args:tt)* ) => {
-        if let Some(fs) = $crate::gather_format!($comm_expr; $($args)*) {
-            eprintln!("{:?}", fs);
+        for s in $crate::gather_format!($comm_expr; $($args)*) {
+            println!("{}", s);
         }
     };
 }
@@ -137,8 +137,8 @@ macro_rules! gather_println {
 #[macro_export]
 macro_rules! gather_eprintln {
     ($comm_expr: expr;$($args:tt)* ) => {
-        if let fs = $crate::gather_format!($comm_expr; $($args)*) {
-            eprintln!("{:?}", fs);
+        for s in $crate::gather_format!($comm_expr; $($args)*) {
+            eprintln!("{}", s);
         }
     };
 }
@@ -159,7 +159,7 @@ macro_rules! gather_info {
 #[macro_export]
 macro_rules! gather_error {
     ($comm_expr: expr; $($args:tt)* ) => {
-        if let Some(fsv) = sope::log_gather_format_vec!(
+        if let Some(fsv) = $crate::log_gather_format_vec!(
             $comm_expr; log::Level::Error; $($args)*
         ) {
             for fs in fsv {
@@ -172,7 +172,7 @@ macro_rules! gather_error {
 #[macro_export]
 macro_rules! gather_debug {
     ($comm_expr: expr; $($args:tt)* ) => {
-        if let Some(fsv) = sope::log_gather_format_vec!(
+        if let Some(fsv) = $crate::log_gather_format_vec!(
             $comm_expr; log::Level::Debug; $($args)*
         ) {
             for fs in fsv {
@@ -185,7 +185,7 @@ macro_rules! gather_debug {
 #[macro_export]
 macro_rules! gather_warn {
     ($comm_expr: expr; $($args:tt)* ) => {
-        if let Some(fsv) = sope::log_gather_format_vec!(
+        if let Some(fsv) = $crate::log_gather_format_vec!(
             $comm_expr; log::Level::Warn; $($args)*
         ) {
             for fs in fsv {
@@ -202,7 +202,7 @@ macro_rules! ensure_eq {
         let rv = ($right);
         anyhow::ensure!(
             lv == rv,
-            sope::log::EnsureError::LR(file!(), line!(), lv, rv)
+            $crate::log::EnsureError::LR(file!(), line!(), lv, rv)
         );
     }};
 }
@@ -210,6 +210,6 @@ macro_rules! ensure_eq {
 #[macro_export]
 macro_rules! ensure {
     ($cond:expr $(,)?) => {{
-        anyhow::ensure!(($cond), sope::log::EnsureError::C(file!(), line!(), 0, 0));
+        anyhow::ensure!(($cond), $crate::log::EnsureError::C(file!(), line!(), 0, 0));
     }};
 }
