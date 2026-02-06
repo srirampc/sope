@@ -5,7 +5,6 @@ edition = "2024"
 readme = "README.md"
 repository = "https://github.com/srirampc/sope"
 license = "Apache-2.0"
-license-file = "LICENSE"
 description = "Simplified, and type-safe interface to MPI with error handling"
 # TODO:: Add documentation and create homepage
 documentation = "https://github.com/srirampc/sope"
@@ -15,7 +14,7 @@ homepage = "https://github.com/srirampc/sope"
 members = [".", "sope-derive"]
 
 [dependencies]
-sope_derive = { path = "./sope-derive", version = "*" }
+sope_derive = { path = "./sope-derive", version = "0.1" }
 anyhow = "1.0.100"
 chrono = "0.4.43"
 lazy_static = "1.5.0"
