@@ -15,6 +15,8 @@ and deployment.
 
 - Built on top of `rsmpi` MPI library for rust and all functions are
   type-genric w.r.t the `rsmpi`'s `Equivalence` trait.
+- `GEquivalence` derive macro for automatically constructing MPI_Datatypes
+  for rust generic types.
 - Collective operations with input/output size validations, and error handling.
 - Convenience functions and overloads for common MPI operations with
   sane defaults (e.g., super easy collectives: `let allsizes: Vec<usize> =
@@ -23,8 +25,8 @@ sope::reduction::allgather_one(local_size, &comm)`).
 
 ### Planned / TODO
 
-- [ ] Simplify user operations
 - [ ] Send/Receive operations
+- [ ] Simplify user operations
 - [ ] Wrappers for non-blocking collectives
 - [ ] Implementing and tuning different sorting algorithms
 - [ ] More parallel (standard) algorithms
@@ -127,6 +129,57 @@ In the background, `sope` performs many things, including (but not limited to):
 - redistributing the data so that it has the same distribution as given in the
   input to `sort`
 
+
+#### Generic MPI types
+
+`sope::traits::GEquivalence` is a derive macro that can automatically define 
+MPI Datatypes for a struct with generics. 
+
+The following example defines struct `GenericTriple`, which has three members
+of three different genric types. By deriving from the `GEquivalence` macro,
+we can use elements of this type as a MPI datatype for distributed sort.
+
+```rust
+use rand::{Rng, SeedableRng};
+use rand_chacha::ChaCha8Rng;
+use std::iter::zip;
+use sope::{
+    comm::WorldComm,
+    sort::{sort, is_sorted_by},
+    traits::GEquivalence,
+};
+
+#[derive(GEquivalence, Debug, Clone, Default)]
+struct GenericTriple<T1, T2, T3> {
+    first: T1,
+    second: T2,
+    third: T3,
+}
+
+type TTuple = GenericTriple<i32, u16, f32>;
+
+let c = WorldComm::init();
+let irng = ChaCha8Rng::seed_from_u64(0).random_iter::<i32>();
+let urng = ChaCha8Rng::seed_from_u64(0).random_iter::<u16>();
+let frng = ChaCha8Rng::seed_from_u64(0).random_iter::<f32>();
+
+let mut tvec: Vec<TTuple> = std::iter::zip(irng, urng)
+    .zip(frng)
+    .take(nelts)
+    .map(|((x, y), z)| TTuple {
+        first: x,
+        second: y,
+        third: z,
+    })
+    .collect();
+
+let cmp = |a: &TTuple, b: &TTuple| (a.first, a.second).cmp(&(b.first, b.second));
+sort_by(&mut tvec, cmp, &c.comm)?;
+
+let d_sorted = is_sorted_by(&lvec,|a, b| cmp_fn(a, b).is_le(), &c.comm)?;
+assert!(d_sorted)
+```
+
 ### Authors
 
 - Patrick Flick (Original author of [mxx](https:://github.com/patflick/mxx)),
@@ -139,8 +192,8 @@ Add this repository as a dependency in Cargo.toml.
 
 ### Dependencies
 
-`sope` currently works with `MPI-2` and `MPI-3`.
-However, some collective operations and sorting will work on data sizes `>= 2 GB` only with `MPI-3`.
+`sope` currently works with `MPI-2` and `MPI-3`. However, some collective 
+operations and sorting will work on data sizes `>= 2 GB` only with `MPI-3`.
 
 ### Compiling
 

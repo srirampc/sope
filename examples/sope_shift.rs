@@ -1,10 +1,26 @@
-use anyhow::Result;
+//
+// Copyright 2026 Georgia Institute of Technology
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
 
+use anyhow::Result;
+use mpi::collective::CommunicatorCollectives;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use sope::{
     comm::WorldComm,
-    cond_println, ensure_eq,
+    cond_info, cond_println, ensure_eq,
     reduction::any_of,
     shift::{left_shift, left_shift_vec, right_shift, right_shift_vec},
 };
@@ -67,7 +83,7 @@ fn log_if_error<T>(ex: Result<T>, c: &WorldComm, tm: &str) {
             ex.map_or_else(|e| e.to_string(), |_r| "".to_string())
         );
     } else {
-        cond_println!(c.is_root(); "{} SUCCESSFUL", tm );
+        cond_info!(c.is_root(); "{} SUCCESSFUL", tm );
     }
 }
 
@@ -75,6 +91,8 @@ fn run(c: &WorldComm) {
     let _ = env_logger::try_init();
     log_if_error(test_shift(c), c, "SHIFT");
     log_if_error(test_shift_vec(c), c, "SHIFT VEC");
+    c.comm.barrier();
+    cond_println!(c.is_root(); "SHIFT TEST COMPLETED");
 }
 
 fn main() {

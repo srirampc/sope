@@ -15,12 +15,13 @@
 //
 
 use anyhow::{Ok, Result};
+use mpi::collective::CommunicatorCollectives;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use sope::{
     bcast::{bcast_one, bcast_vec},
     comm::WorldComm,
-    cond_println, ensure_eq,
+    cond_info, cond_println, ensure_eq,
     reduction::any_of,
 };
 
@@ -57,7 +58,7 @@ fn log_if_error<T>(ex: Result<T>, c: &WorldComm, tm: &str) {
             ex.map_or_else(|e| e.to_string(), |_r| "".to_string())
         );
     } else {
-        cond_println!(c.is_root(); "{} SUCCESSFUL", tm );
+        cond_info!(c.is_root(); "{} SUCCESSFUL", tm );
     }
 }
 
@@ -65,6 +66,8 @@ fn run(c: &WorldComm) {
     let _ = env_logger::try_init();
     log_if_error(test_bcast_one(c), c, "BROADCAST ONE");
     log_if_error(test_bcast_vec(c), c, "BROADCAST VEC");
+    c.comm.barrier();
+    cond_println!(c.is_root(); "BROADCAST TEST COMPLETED");
 }
 
 fn main() {

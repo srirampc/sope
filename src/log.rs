@@ -1,10 +1,13 @@
 use std::fmt::{Debug, Display};
 use thiserror::Error;
+
 #[derive(Error, Debug)]
 pub enum EnsureError<F: Debug + Display, T: Debug + Display, L: Debug, R: Debug> {
     #[error("ensure failed at {0}:{1}")]
     C(F, T, L, R),
-    #[error("ensure `left == right` failed at {0}:{1} :: left:({2:?}), right:({3:?})")]
+    #[error(
+        "ensure `left == right` failed at {0}:{1} :: left:({2:?}), right:({3:?})"
+    )]
     LR(F, T, L, R),
 }
 
@@ -74,10 +77,24 @@ macro_rules! cond_warn {
 macro_rules! gather_format_vec {
     ($comm_expr: expr; $($args:tt)* ) => {{
         let frs = format!($($args)*);
-        let s = if frs.len() > 0 {
+        let s = if !frs.is_empty() {
+            use ::mpi::topology::Communicator;
+            format!("[R{:>4}] {}", ($comm_expr).rank(), frs)
+        } else {
+            frs
+        };
+        $crate::collective::gather_strings(s, 0, ($comm_expr))
+    }};
+}
+
+#[macro_export]
+macro_rules! gather_format_tstamp_vec {
+    ($comm_expr: expr; $($args:tt)* ) => {{
+        let frs = format!($($args)*);
+        let s = if !frs.is_empty() {
             use ::mpi::topology::Communicator;
             format!(
-                "[{}::{}] {}", ($comm_expr).rank(),
+                "[R{:>4}::{}] {}", ($comm_expr).rank(),
                 ::chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
                 frs
             )
@@ -210,6 +227,9 @@ macro_rules! ensure_eq {
 #[macro_export]
 macro_rules! ensure {
     ($cond:expr $(,)?) => {{
-        anyhow::ensure!(($cond), $crate::log::EnsureError::C(file!(), line!(), 0, 0));
+        anyhow::ensure!(
+            ($cond),
+            $crate::log::EnsureError::C(file!(), line!(), 0, 0)
+        );
     }};
 }

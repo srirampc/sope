@@ -1,5 +1,5 @@
 //! This crate is a Rust port of patflick's [mxx] C++ template library for MPI.
-//! Similart to [mxx], the goal is to provide:
+//! Similar to [mxx], the goal is to provide:
 //! 1. Simplified, efficient, and type-safe wrappers to common MPI operations
 //!    along with input validation and error.
 //! 2. Collection of high-performance standard algorithms for parallel
@@ -19,3 +19,7 @@ pub mod reduction;
 pub mod shift;
 pub mod sort;
 pub mod util;
+
+pub mod traits {
+    pub use sope_derive::GEquivalence;
+}

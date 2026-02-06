@@ -14,10 +14,11 @@
 // limitations under the License.
 //
 
-use std::iter::{repeat_n, zip};
-
 use anyhow::{Ok, Result};
-use mpi::traits::{Communicator, Equivalence};
+use mpi::{
+    collective::CommunicatorCollectives,
+    traits::{Communicator, Equivalence},
+};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use sope::{
@@ -28,9 +29,10 @@ use sope::{
         scatter_vec, scatterv, scatterv_vec,
     },
     comm::WorldComm,
-    cond_println, ensure_eq,
+    cond_info, cond_println, ensure_eq,
     reduction::any_of,
 };
+use std::iter::{repeat_n, zip};
 
 #[derive(Debug, Equivalence, Default, Clone)]
 struct CPair {
@@ -419,7 +421,7 @@ fn log_if_error<T>(ex: Result<T>, c: &WorldComm, tm: &str) {
             ex.map_or_else(|e| e.to_string(), |_r| "".to_string())
         );
     } else {
-        cond_println!(c.is_root(); "{} SUCCESSFUL", tm );
+        cond_info!(c.is_root(); "{} SUCCESSFUL", tm );
     }
 }
 
@@ -436,6 +438,8 @@ fn run(c: &WorldComm) {
     log_if_error(test_allgatherv(c), c, "ALLGATHERV");
     log_if_error(test_all2all(c), c, "ALL2ALL");
     log_if_error(test_all2allv(c), c, "ALL2ALLV");
+    c.comm.barrier();
+    cond_println!(c.is_root(); "BROADCAST TEST COMPLETED");
 }
 
 fn main() {

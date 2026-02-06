@@ -1,4 +1,21 @@
+//
+// Copyright 2026 Georgia Institute of Technology
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
 use anyhow::{Ok, Result};
+use mpi::collective::CommunicatorCollectives;
 use mpi::traits::Equivalence;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
@@ -7,7 +24,7 @@ use std::{cmp::Ordering, iter::zip};
 use sope::{
     collective::{gatherv_full_vec, gatherv_vec},
     comm::WorldComm,
-    cond_println, ensure_eq,
+    cond_info, cond_println, ensure_eq,
     reduction::{all_of, any_of},
     shift::right_shift,
     sort::{
@@ -176,7 +193,7 @@ fn log_if_error<T>(ex: Result<T>, c: &WorldComm, tm: &str) {
             ex.map_or_else(|e| e.to_string(), |_r| "".to_string())
         );
     } else {
-        cond_println!(c.is_root(); "{} SUCCESSFUL", tm );
+        cond_info!(c.is_root(); "{} SUCCESSFUL", tm );
     }
 }
 
@@ -186,6 +203,8 @@ fn run(c: &WorldComm) {
     log_if_error(test_sort_imbalanced(c), c, "SAMPLE SORT IMBALANCED");
     log_if_error(test_sample_sort(c), c, "SAMPLE SORT");
     log_if_error(test_bitonic_sort(c), c, "BITONIC SORT");
+    c.comm.barrier();
+    cond_println!(c.is_root(); "SORT TEST COMPLETED");
 }
 
 fn main() {

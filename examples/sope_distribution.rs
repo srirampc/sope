@@ -17,10 +17,13 @@
 use std::fmt::Debug;
 
 use anyhow::Result;
-use mpi::{collective::SystemOperation, traits::Equivalence};
+use mpi::{
+    collective::{CommunicatorCollectives, SystemOperation},
+    traits::Equivalence,
+};
 use sope::{
     comm::WorldComm,
-    cond_println,
+    cond_info, cond_println,
     distribution::{
         Distributor, StableDistributor, distribute_vec, stable_distribute_vec,
     },
@@ -161,13 +164,15 @@ fn log_if_error<T>(ex: Result<T>, c: &WorldComm, tm: &str) {
             ex.map_or_else(|e| e.to_string(), |_r| "".to_string())
         );
     } else {
-        cond_println!(c.is_root(); "{} TEST SUCCESSFUL", tm );
+        cond_info!(c.is_root(); "{} TEST SUCCESSFUL", tm );
     }
 }
 
 fn run(c: &WorldComm) {
     let _ = env_logger::try_init();
     log_if_error(test_distribute(c), c, "DISTRIBUTE");
+    c.comm.barrier();
+    cond_println!(c.is_root(); "DISTRIBUTE TEST COMPLETED");
 }
 
 fn main() {

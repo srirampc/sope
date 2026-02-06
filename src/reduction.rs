@@ -121,13 +121,13 @@ where
 
 type ReductionElt<T> = Pair<i32, T>;
 
-fn optimum_element_by<'a, T, F>(
+fn optimum_element_by<T, F>(
     x: &T,
     compare: F,
     comm: &dyn Communicator,
 ) -> (i32, T)
 where
-    T: 'static + Equivalence<Out = DatatypeRef<'a>> + Clone + Default,
+    T: 'static + Equivalence<Out = DatatypeRef<'static>> + Clone + Default,
     F: Sync + Fn(&T, &T) -> bool, // Return true, if first element is optimum
 {
     let arx = [ReductionElt::<T> {
@@ -149,13 +149,13 @@ where
 
 ///
 /// Returns the process id with the maximum element based  on the comparator function
-pub fn max_element_by<'a, T, F>(
+pub fn max_element_by<T, F>(
     x: &T,
     compare: F,
     comm: &dyn Communicator,
 ) -> (i32, T)
 where
-    T: 'static + Equivalence<Out = DatatypeRef<'a>> + Clone + Default,
+    T: 'static + Equivalence<Out = DatatypeRef<'static>> + Clone + Default,
     F: Sync + Fn(&T, &T) -> bool, // Returns true if first value is gt second
 {
     optimum_element_by(x, compare, comm)
@@ -163,16 +163,16 @@ where
 
 ///
 /// Returns the process id with the maximum element
-pub fn max_element<'a, T>(x: &T, comm: &dyn Communicator) -> (i32, T)
+pub fn max_element<T>(x: &T, comm: &dyn Communicator) -> (i32, T)
 where
-    T: 'static + Ord + Equivalence<Out = DatatypeRef<'a>> + Clone + Default,
+    T: 'static + Ord + Equivalence<Out = DatatypeRef<'static>> + Clone + Default,
 {
     max_element_by(x, |x: &T, y: &T| x.gt(y), comm)
 }
 
-pub fn max_element_slice<'a, T>(sx: &[T], comm: &dyn Communicator) -> (i32, T)
+pub fn max_element_slice<T>(sx: &[T], comm: &dyn Communicator) -> (i32, T)
 where
-    T: 'static + Ord + Equivalence<Out = DatatypeRef<'a>> + Clone + Default,
+    T: 'static + Ord + Equivalence<Out = DatatypeRef<'static>> + Clone + Default,
 {
     let dfx = T::default();
     let x = sx.iter().max().unwrap_or(&dfx);
@@ -181,13 +181,13 @@ where
 
 ///
 /// Returns the process id with the minimum element based  on the comparator function
-pub fn min_element_by<'a, T, F>(
+pub fn min_element_by<T, F>(
     x: &T,
     compare: F,
     comm: &dyn Communicator,
 ) -> (i32, T)
 where
-    T: 'static + Eq + Equivalence<Out = DatatypeRef<'a>> + Clone + Default,
+    T: 'static + Eq + Equivalence<Out = DatatypeRef<'static>> + Clone + Default,
     F: Sync + Fn(&T, &T) -> bool, // Returns true if first value is gt second
 {
     optimum_element_by(x, compare, comm)
@@ -195,16 +195,16 @@ where
 
 ///
 /// Returns the process id with the minimum element
-pub fn min_element<'a, T>(x: &T, comm: &dyn Communicator) -> (i32, T)
+pub fn min_element<T>(x: &T, comm: &dyn Communicator) -> (i32, T)
 where
-    T: 'static + Ord + Equivalence<Out = DatatypeRef<'a>> + Clone + Default,
+    T: 'static + Ord + Equivalence<Out = DatatypeRef<'static>> + Clone + Default,
 {
     min_element_by(x, |x: &T, y: &T| x.lt(y), comm)
 }
 
-pub fn min_element_slice<'a, T>(sx: &[T], comm: &dyn Communicator) -> (i32, T)
+pub fn min_element_slice<T>(sx: &[T], comm: &dyn Communicator) -> (i32, T)
 where
-    T: 'static + Ord + Equivalence<Out = DatatypeRef<'a>> + Clone + Default,
+    T: 'static + Ord + Equivalence<Out = DatatypeRef<'static>> + Clone + Default,
 {
     let dfx = T::default();
     let x = sx.iter().min().unwrap_or(&dfx);
