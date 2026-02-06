@@ -217,6 +217,40 @@ Running the tests (with however many processes you want).
 mpirun -np 13 ./target/debug/$SOPE_EXAMPLE_EXECUTABLE
 ```
 
+## Library Name
+
+The library is named 'sope' after the [Sope Creek](https://en.wikipedia.org/wiki/Sope_Creek),
+a " 11.6-mile-long (18.7 km) stream located in Cobb County, Georgia, United States."
+The creek's name itself has an interesting 
+[etymology](https://en.wikipedia.org/wiki/Sope_Creek#False_etymology) on its own. 
+As per wikipedia, a 2012 statement in the  __Atlanta Journal__ states:
+
+    It was originally called Soap Creek and was named after a Cherokee named Soap or
+    "Old Soap," according to Jeff Bishop, president of the Georgia chapter of the 
+    Trail of Tears Association, which works with the Cherokee Nation, the Eastern
+    Band of Cherokee Indians and the National Park Service to preserve Trail of
+    Tears related sites in Georgia. Bishop wrote in an email that it was called
+    Soap Creek on the 1832 Georgia Land Lottery maps. Old Soap was highly regarded
+    by the whites in the area, according to "The First Hundred Years: A Short 
+    History of Cobb County," which states that "he had lived there so long that
+    a creek and its branch were named for him." However, there was a dispute,
+    and he and his family were forced to move to Cherokee County, where they lived 
+    until they were relocated on the Trail of Tears, wrote Bishop, who contributes
+    to www.trailofthetrail.com. "There are descendants of Soap who now live in 
+    Oklahoma, in the Cherokee Nation," Bishop wrote in an email. "Chris Soap 
+    serves on the Cherokee Nation tribal council, and his father, Charley Soap,
+    is a respected elder who is the widower of former Cherokee Nation Chief Wilma
+    Mankiller." The spelling of Sope Creek apparently was changed sometime in the
+    19th century, but it was still spelled Soap in 1849's "Statistics of the 
+    State of Georgia." Historical markers use both Soap and Sope.
+
+<figure>
+<img src="https://upload.wikimedia.org/wikipedia/commons/5/5a/Sope_Creek_December_2019.jpg" alt="Sope Creek" width="350" height="233"/>
+<figcaption>
+Sope Creek (Image taken from Wikipedia)
+</figcaption>
+</figure>
+
 ## Licensing
 
 Our code is licensed under the
