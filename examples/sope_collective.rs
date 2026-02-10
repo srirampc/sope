@@ -19,8 +19,8 @@ use mpi::{
     collective::CommunicatorCollectives,
     traits::{Communicator, Equivalence},
 };
-use rand::{Rng, SeedableRng};
-use rand_chacha::ChaCha8Rng;
+use rand::{RngExt, SeedableRng};
+use rand::rngs::ChaCha8Rng;
 use sope::{
     collective::{
         All2allvArgs, all2all, all2all_vec, all2allv, all2allv_vec, allgather,

@@ -16,8 +16,8 @@
 
 use anyhow::Result;
 use mpi::collective::CommunicatorCollectives;
-use rand::{Rng, SeedableRng};
-use rand_chacha::ChaCha8Rng;
+use rand::{RngExt, SeedableRng};
+use rand::rngs::ChaCha8Rng;
 use std::iter::zip;
 
 use sope::{

@@ -7,10 +7,9 @@
 //!
 //! [mxx]: https://github.com/patflick/mxx
 
-pub mod collective;
-
-/// Interface to Comm objects
 pub mod bcast;
+pub mod collective;
+pub mod big_collective;
 pub mod comm;
 pub mod distribution;
 pub mod log;

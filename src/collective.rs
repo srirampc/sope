@@ -93,6 +93,24 @@ where
             snd_disp: self.snd_disp.iter().map(|x| x.to_i32().unwrap()).collect(),
         }
     }
+
+    // Creates an All2allvArgs<usize> object from the existing object
+    pub fn to_usize(&self) -> All2allvArgs<usize> {
+        All2allvArgs::<usize> {
+            rcv_cts: self.rcv_cts.iter().map(|x| x.to_usize().unwrap()).collect(),
+            rcv_disp: self
+                .rcv_disp
+                .iter()
+                .map(|x| x.to_usize().unwrap())
+                .collect(),
+            snd_cts: self.snd_cts.iter().map(|x| x.to_usize().unwrap()).collect(),
+            snd_disp: self
+                .snd_disp
+                .iter()
+                .map(|x| x.to_usize().unwrap())
+                .collect(),
+        }
+    }
 }
 
 pub fn scatter_one<T>(

@@ -16,8 +16,8 @@
 
 use anyhow::{Ok, Result};
 use mpi::collective::CommunicatorCollectives;
-use rand::{Rng, SeedableRng};
-use rand_chacha::ChaCha8Rng;
+use rand::{RngExt, SeedableRng};
+use rand::rngs::ChaCha8Rng;
 use sope::{
     bcast::{bcast_one, bcast_vec},
     comm::WorldComm,

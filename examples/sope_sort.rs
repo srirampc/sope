@@ -17,8 +17,8 @@
 use anyhow::{Ok, Result};
 use mpi::collective::CommunicatorCollectives;
 use mpi::traits::Equivalence;
-use rand::{Rng, SeedableRng};
-use rand_chacha::ChaCha8Rng;
+use rand::{RngExt, SeedableRng};
+use rand::rngs::ChaCha8Rng;
 use std::{cmp::Ordering, iter::zip};
 
 use sope::{
