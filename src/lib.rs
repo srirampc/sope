@@ -17,6 +17,7 @@ pub mod partition;
 pub mod reduction;
 pub mod shift;
 pub mod sort;
+pub mod timer;
 pub mod util;
 
 pub mod traits {
