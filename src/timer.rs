@@ -92,6 +92,10 @@ impl<'a> SectionTimer<'a> {
         (max_time, min_time, avg_time)
     }
 
+    pub fn reset(&mut self) {
+        self.start = Instant::now();
+    }
+
     // ends section and 
     pub fn info_section(&mut self, name: &str) {
         if log::log_enabled!(log::Level::Info) {
