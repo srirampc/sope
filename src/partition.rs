@@ -91,6 +91,14 @@ pub struct ModuloDist {
 }
 
 impl ModuloDist {
+    pub fn block_start(global_size: usize, nproc: i32, rank: i32) -> usize {
+        ModuloDist::new(global_size, nproc, rank).start()
+    }
+
+    pub fn block_end(global_size: usize, nproc: i32, rank: i32) -> usize {
+        ModuloDist::new(global_size, nproc, rank).end()
+    }
+
     pub fn new(global_size: usize, comm_size: i32, comm_rank: i32) -> Self {
         let _comm_size: usize = comm_size as usize;
         let _comm_rank: usize = comm_rank as usize;
@@ -148,7 +156,8 @@ impl Dist for ModuloDist {
     }
 
     fn end_at(&self, rank: i32) -> usize {
-        (self._div * (rank as usize + 1)) + usize::min(self._mod, rank as usize + 1)
+        (self._div * (rank as usize + 1))
+            + usize::min(self._mod, rank as usize + 1)
     }
 
     fn start(&self) -> usize {
@@ -170,9 +179,17 @@ pub struct InterleavedDist {
 }
 
 impl InterleavedDist {
+    pub fn block_start(n: usize, nproc: i32, rank: i32) -> usize {
+        (rank as usize * n) / nproc as usize
+    }
+
+    pub fn block_end(n: usize, nproc: i32, rank: i32) -> usize {
+        ((rank as usize + 1) * n) / nproc as usize
+    }
+
     pub fn new(n: usize, nproc: i32, rank: i32) -> Self {
-        let _local_start = (rank as usize * n) / nproc as usize;
-        let _local_end = ((rank as usize + 1) * n) / nproc as usize;
+        let _local_start = Self::block_start(n, nproc, rank);
+        let _local_end = Self::block_end(n, nproc, rank);
         let _local_size = _local_end - _local_start;
         InterleavedDist {
             _n: n,
@@ -237,7 +254,8 @@ pub struct ArbitDist {
 
 impl ArbitDist {
     pub fn new(n: usize, nproc: i32, rank: i32, sizes: Vec<usize>) -> Self {
-        let _starts: Vec<usize> = exc_prefix_sum_iter(sizes.iter(), 1usize).collect();
+        let _starts: Vec<usize> =
+            exc_prefix_sum_iter(sizes.iter(), 1usize).collect();
         let _ends: Vec<usize> = zip(sizes.iter(), _starts.iter())
             .map(|(z, s)| *z + *s)
             .collect();
