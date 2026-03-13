@@ -1,7 +1,7 @@
 use anyhow::{Ok, Result, bail};
 use mpi::traits::{Communicator, Destination, Equivalence, Source};
 
-use crate::collective::{All2allvArgs, MCount};
+use crate::{All2allvArgs, MCount};
 use crate::reduction::any_of;
 use crate::util::exc_prefix_sum;
 use crate::{

@@ -1,14 +1,15 @@
 use anyhow::{Ok, Result, bail};
 use mpi::{
+    collective::SystemOperation,
     datatype::{Partition, PartitionMut},
     traits::{Communicator, CommunicatorCollectives, Equivalence, Root},
 };
-use num::{FromPrimitive, Integer, ToPrimitive};
-use std::{iter::zip, ops::AddAssign};
+use std::iter::zip;
 use thiserror::Error;
 
 use crate::{
-    reduction::{all_of, all_same, any_of},
+    All2allvArgs, MCount,
+    reduction::{all_of, all_same, allreduce, any_of},
     util::exc_prefix_sum_iter,
 };
 
@@ -18,99 +19,6 @@ pub enum Error {
     OutSliceLengthError(usize, usize),
     #[error("Input Slice Error:: {0}")]
     InSliceError(String),
-}
-
-pub trait MCount:
-    Integer + Default + Clone + AddAssign + ToPrimitive + FromPrimitive + Equivalence
-{
-}
-impl<
-    T: Integer
-        + Default
-        + Clone
-        + AddAssign
-        + ToPrimitive
-        + FromPrimitive
-        + Equivalence,
-> MCount for T
-{
-}
-
-#[derive(Debug)]
-/// All2allv arguments which includes send counts, send displacements,
-/// recieve counts and recieve displacements.
-pub struct All2allvArgs<T> {
-    pub rcv_cts: Vec<T>,
-    pub rcv_disp: Vec<T>,
-    pub snd_cts: Vec<T>,
-    pub snd_disp: Vec<T>,
-}
-
-impl<T> All2allvArgs<T>
-where
-    T: 'static + MCount,
-{
-    // Creates an empty All2allvArgs object with all members
-    pub fn new(p: usize) -> Self {
-        All2allvArgs {
-            rcv_cts: vec![T::default(); p],
-            rcv_disp: vec![T::default(); p],
-            snd_cts: vec![T::default(); p],
-            snd_disp: vec![T::default(); p],
-        }
-    }
-
-    // Creates an object with provided counts, and displacements computed with
-    // exclusive prefix sum based on the counts
-    pub fn from_counts<S: ToPrimitive>(
-        send_counts: &[S],
-        recv_counts: &[S],
-    ) -> Self {
-        let snd_cts: Vec<T> = send_counts
-            .iter()
-            .map(|x| T::from_usize(x.to_usize().unwrap()).unwrap())
-            .collect();
-        let rcv_cts: Vec<T> = recv_counts
-            .iter()
-            .map(|x| T::from_usize(x.to_usize().unwrap()).unwrap())
-            .collect();
-        let snd_disp = exc_prefix_sum_iter(snd_cts.iter(), T::one()).collect();
-        let rcv_disp = exc_prefix_sum_iter(rcv_cts.iter(), T::one()).collect();
-        All2allvArgs::<T> {
-            snd_cts,
-            snd_disp,
-            rcv_cts,
-            rcv_disp,
-        }
-    }
-
-    // Creates an All2allvArgs<i32> object from the existing object
-    pub fn to_i32(&self) -> All2allvArgs<i32> {
-        All2allvArgs::<i32> {
-            rcv_cts: self.rcv_cts.iter().map(|x| x.to_i32().unwrap()).collect(),
-            rcv_disp: self.rcv_disp.iter().map(|x| x.to_i32().unwrap()).collect(),
-            snd_cts: self.snd_cts.iter().map(|x| x.to_i32().unwrap()).collect(),
-            snd_disp: self.snd_disp.iter().map(|x| x.to_i32().unwrap()).collect(),
-        }
-    }
-
-    // Creates an All2allvArgs<usize> object from the existing object
-    pub fn to_usize(&self) -> All2allvArgs<usize> {
-        All2allvArgs::<usize> {
-            rcv_cts: self.rcv_cts.iter().map(|x| x.to_usize().unwrap()).collect(),
-            rcv_disp: self
-                .rcv_disp
-                .iter()
-                .map(|x| x.to_usize().unwrap())
-                .collect(),
-            snd_cts: self.snd_cts.iter().map(|x| x.to_usize().unwrap()).collect(),
-            snd_disp: self
-                .snd_disp
-                .iter()
-                .map(|x| x.to_usize().unwrap())
-                .collect(),
-        }
-    }
 }
 
 pub fn scatter_one<T>(
@@ -590,7 +498,7 @@ where
     Ok(recv_buf)
 }
 
-pub fn all2allv<T, S>(
+fn all2allv_<T, S>(
     s_in: &[T],
     s_out: &mut [T],
     args: &All2allvArgs<S>,
@@ -600,13 +508,35 @@ where
     T: Equivalence + Clone,
     S: 'static + MCount,
 {
-    // TODO: Handle large size
     let iargs = args.to_i32();
     let send_part = Partition::new(s_in, &iargs.snd_cts[..], &iargs.snd_disp[..]);
     let mut rcv_part =
         PartitionMut::new(s_out, &iargs.rcv_cts[..], &iargs.rcv_disp[..]);
     comm.all_to_all_varcount_into(&send_part, &mut rcv_part);
     Ok(())
+}
+
+pub fn all2allv<T, S>(
+    s_in: &[T],
+    s_out: &mut [T],
+    args: &All2allvArgs<S>,
+    comm: &dyn Communicator,
+) -> Result<()>
+where
+    T: Equivalence + Clone + Default,
+    S: 'static + MCount,
+{
+    let uargs = args.to_usize();
+    let total_send = uargs.snd_cts.iter().sum::<usize>();
+    let total_rcv = uargs.rcv_cts.iter().sum::<usize>();
+    let local_max = total_send.max(total_rcv);
+    let g_max = allreduce(&local_max, comm, SystemOperation::max());
+    //  Handle large size
+    if g_max > i32::MAX as usize {
+        crate::big_collective::all2allv_big(s_in, s_out, args, comm)
+    } else {
+        all2allv_(s_in, s_out, args, comm)
+    }
 }
 
 pub fn all2allv_slice<T>(
@@ -617,7 +547,7 @@ pub fn all2allv_slice<T>(
     comm: &dyn Communicator,
 ) -> Result<()>
 where
-    T: Equivalence + Clone,
+    T: Equivalence + Clone + Default,
 {
     let send_total: usize = send_counts.iter().sum();
     if !all_of(

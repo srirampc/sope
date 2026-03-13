@@ -19,14 +19,15 @@ use mpi::{
     collective::CommunicatorCollectives,
     traits::{Communicator, Equivalence},
 };
-use rand::{RngExt, SeedableRng};
 use rand::rngs::ChaCha8Rng;
+use rand::{RngExt, SeedableRng};
 use sope::{
+    All2allvArgs,
     collective::{
-        All2allvArgs, all2all, all2all_vec, all2allv, all2allv_vec, allgather,
-        allgather_one, allgather_vec, allgatherv, allgatherv_vec, gather,
-        gather_one, gather_vec, gatherv, gatherv_vec, scatter, scatter_one,
-        scatter_vec, scatterv, scatterv_vec,
+        all2all, all2all_vec, all2allv, all2allv_vec, allgather, allgather_one,
+        allgather_vec, allgatherv, allgatherv_vec, gather, gather_one,
+        gather_vec, gatherv, gatherv_vec, scatter, scatter_one, scatter_vec,
+        scatterv, scatterv_vec,
     },
     comm::WorldComm,
     cond_info, cond_println, ensure_eq,

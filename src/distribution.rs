@@ -7,7 +7,8 @@ use std::collections::VecDeque;
 use thiserror::Error;
 
 use crate::{
-    collective::{All2allvArgs, all2all_vec, all2allv, allgather_one, scatterv},
+    All2allvArgs,
+    collective::{all2all_vec, all2allv, allgather_one, scatterv},
     partition::{ArbitDist, Dist},
     reduction::{
         all_of, allreduce_sum, all_same, any_of, exclusive_scan, max_element,
