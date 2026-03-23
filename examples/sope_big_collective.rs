@@ -8,6 +8,7 @@ use sope::{
     cond_debug, cond_println, ensure_eq, gather_debug,
     partition::{Dist, InterleavedDist},
     reduction::{all_of, any_of},
+    timer::{CumulativeTimer, SectionTimer},
     util::exc_prefix_sum,
 };
 use std::iter::zip;
@@ -32,6 +33,7 @@ fn init_gatherv_rcv_counts(part: &impl Dist) -> Result<Vec<usize>> {
 }
 
 fn test_gatherv_size(c: &WorldComm, input_size: usize) -> Result<()> {
+    let s_timer = SectionTimer::from_comm(&c.comm, ",");
     let part = InterleavedDist::new(input_size, c.size, c.rank);
     let (rcv_data, rcv_counts) = if c.rank == 0 {
         let rcv_counts = init_gatherv_rcv_counts(&part)?;
@@ -68,6 +70,7 @@ fn test_gatherv_size(c: &WorldComm, input_size: usize) -> Result<()> {
     };
     ensure_eq!(all_of(rcv_test, &c.comm), true);
 
+    s_timer.info_section(&format!("GATHERV TEST WITH {}", input_size));
     Ok(())
 }
 
@@ -91,6 +94,7 @@ fn init_scatterv_snd_counts(part: &impl Dist) -> Result<Vec<usize>> {
 }
 
 fn test_scatterv_size(c: &WorldComm, input_size: usize) -> Result<()> {
+    let s_timer = SectionTimer::from_comm(&c.comm, ",");
     let (snd_data, send_counts) = if c.rank == 0 {
         let part = InterleavedDist::new(input_size, c.size, c.rank);
         let counts = init_scatterv_snd_counts(&part)?;
@@ -121,6 +125,7 @@ fn test_scatterv_size(c: &WorldComm, input_size: usize) -> Result<()> {
     let test_val = rcv_data.iter().all(|x| *x == c.rank);
     ensure_eq!(test_val, true);
 
+    s_timer.info_section(&format!("SCATTERV TEST WITH {}", input_size));
     Ok(())
 }
 
@@ -147,6 +152,7 @@ fn init_a2a_snd_counts(part: &impl Dist) -> Result<Vec<usize>> {
 }
 
 fn test_all2allv_size(c: &WorldComm, input_size: usize) -> Result<()> {
+    let s_timer = SectionTimer::from_comm(&c.comm, ",");
     let part = InterleavedDist::new(input_size, c.size, c.rank);
     let send_counts = init_a2a_snd_counts(&part)?;
     gather_debug!(
@@ -174,6 +180,7 @@ fn test_all2allv_size(c: &WorldComm, input_size: usize) -> Result<()> {
     }
 
     ensure_eq!(test_val, true);
+    s_timer.info_section(&format!("A2A TEST WITH {}", input_size));
     Ok(())
 }
 
@@ -190,22 +197,29 @@ fn log_if_error<T>(ex: Result<T>, c: &WorldComm, tm: &str) {
 
 fn run(c: &WorldComm) {
     let _ = env_logger::try_init();
+    let ctimer: CumulativeTimer =  CumulativeTimer::from_comm(&c.comm, ";");
     log_if_error(test_scatterv_size(c, 1024 * 1024), c, "SCATTERV BIG 2^20");
+    ctimer.reset();
     log_if_error(
         test_scatterv_size(c, 1024 * 1024 * 1024),
         c,
         "SCATTER BIG 2^30",
     );
+    ctimer.add_elapsed();
 
     log_if_error(test_gatherv_size(c, 1024 * 1024), c, "GATHER BIG 2^20");
+    ctimer.reset();
     log_if_error(
         test_gatherv_size(c, 1024 * 1024 * 1024),
         c,
         "GATHER BIG 2^30",
     );
+    ctimer.add_elapsed();
 
     log_if_error(test_all2allv_size(c, 1024 * 1024), c, "A2A BIG 2^20");
+    ctimer.reset();
     log_if_error(test_all2allv_size(c, 1024 * 1024 * 1024), c, "A2A BIG 2^30");
+    ctimer.add_elapsed();
 
     if c.size >= 16 {
         // this takes forever ?
@@ -233,6 +247,7 @@ fn run(c: &WorldComm) {
 
     std::thread::sleep(std::time::Duration::from_millis(1000));
     c.comm.barrier();
+    ctimer.info_region("TOTAL 2^30");
     cond_println!(c.is_root(); "BIG COLLECTIVES TEST COMPLETED");
 }
 
