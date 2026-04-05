@@ -1,9 +1,9 @@
 use anyhow::{Ok, Result, bail};
 use mpi::traits::{Communicator, Destination, Equivalence, Source};
 
-use crate::{All2allvArgs, MCount};
 use crate::reduction::any_of;
 use crate::util::exc_prefix_sum;
+use crate::{All2allvArgs, MCount};
 use crate::{
     collective::{Error as CollError, scatter_one},
     reduction::all_of,
@@ -200,6 +200,81 @@ where
         gatherv_big(s_in, None, None, root, comm)?;
         Ok(None)
     }
+}
+
+pub fn all2all_big<T>(
+    a_in: &[T],
+    a_out: &mut [T],
+    comm: &dyn Communicator,
+) -> Result<()>
+where
+    T: Equivalence + Clone + Default,
+{
+    if !all_of(
+        !a_in.is_empty() && a_in.len().is_multiple_of(comm.size() as usize),
+        comm,
+    ) {
+        bail!(CollError::InSliceError(
+            "all2all input len should be multiple of p.".to_string()
+        ));
+    }
+    if !all_of(a_out.len() == a_in.len(), comm) {
+        bail!(CollError::OutSliceLengthError(a_in.len(), a_out.len()));
+    }
+    // n elements to recieve per processor
+    let nrcv_pp = a_in.len() / (comm.size() as usize);
+    let mut rcv_buff: Vec<Vec<T>> =
+        (0..comm.size()).map(|_i| vec![T::default(); nrcv_pp]).collect();
+
+    mpi::request::multiple_scope(2 * comm.size() as usize, |scope, coll| {
+        //senders
+        for i in 0..comm.size() {
+            if i != comm.rank() {
+                let ui = i as usize;
+                let dest_process = comm.process_at_rank(i);
+                let snd_offset = ui * nrcv_pp;
+                let s_range = snd_offset..(snd_offset + nrcv_pp);
+                let req = dest_process.immediate_send(scope, &a_in[s_range]);
+                coll.add(req);
+            }
+        }
+        for (ui, s_rcv_buf) in rcv_buff.iter_mut().enumerate() {
+            if ui != comm.rank() as usize {
+                let snd_process = comm.process_at_rank(ui as i32);
+                let req =
+                    snd_process.immediate_receive_into(scope, &mut s_rcv_buf[..]);
+                coll.add(req);
+            }
+        }
+        // Wait for all of them to complete
+        let mut result = vec![];
+        coll.wait_all(&mut result);
+    });
+
+    for i in 0..comm.size() {
+        let ui = i as usize;
+        let rcv_offset = ui * nrcv_pp;
+        let r_range = rcv_offset..(rcv_offset + nrcv_pp);
+        if i != comm.rank() {
+            a_out[r_range].clone_from_slice(&rcv_buff[ui]);
+        } else {
+            // directly copy to output
+            let snd_offset = ui * nrcv_pp;
+            let s_range = snd_offset..(snd_offset + nrcv_pp);
+            a_out[r_range].clone_from_slice(&a_in[s_range]);
+        }
+    }
+ 
+    Ok(())
+}
+
+pub fn all2all_big_vec<T>(a_in: &[T], comm: &dyn Communicator) -> Result<Vec<T>>
+where
+    T: Equivalence + Default + Clone,
+{
+    let mut recv_buf: Vec<T> = vec![T::default(); a_in.len()];
+    all2all_big(a_in, &mut recv_buf, comm)?;
+    Ok(recv_buf)
 }
 
 pub fn all2allv_big<T, S>(

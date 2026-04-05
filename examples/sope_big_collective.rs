@@ -2,7 +2,9 @@ use anyhow::{Ok, Result};
 use mpi::collective::CommunicatorCollectives;
 use rand::RngExt;
 use sope::{
-    big_collective::{all2allv_big_vec, gatherv_big_vec, scatterv_big_vec},
+    big_collective::{
+        all2all_big_vec, all2allv_big_vec, gatherv_big_vec, scatterv_big_vec,
+    },
     collective::{all2all_vec, scatter_one},
     comm::WorldComm,
     cond_debug, cond_println, ensure_eq, gather_debug,
@@ -129,7 +131,7 @@ fn test_scatterv_size(c: &WorldComm, input_size: usize) -> Result<()> {
     Ok(())
 }
 
-fn init_a2a_snd_counts(part: &impl Dist) -> Result<Vec<usize>> {
+fn init_a2av_snd_counts(part: &impl Dist) -> Result<Vec<usize>> {
     let mut rng = rand::rng();
     let mut round_about = |n: usize, fraction: usize| {
         let rx = rng.random::<u64>() as usize;
@@ -151,10 +153,31 @@ fn init_a2a_snd_counts(part: &impl Dist) -> Result<Vec<usize>> {
     Ok(send_counts)
 }
 
+fn test_all2all_size(c: &WorldComm, pp_size: usize) -> Result<()> {
+    let s_timer = SectionTimer::from_comm(&c.comm, ",");
+    // fill in data
+    let mut local_els: Vec<i32> = (0..c.size)
+        .flat_map(|i| std::iter::repeat_n(i, pp_size))
+        .collect();
+
+    let mut results = all2all_big_vec(&local_els, &c.comm)?;
+    let test_val = results.iter().all(|x| *x == c.rank);
+    results.dedup();
+    local_els.dedup();
+    gather_debug!(&c.comm; "R {:?} {:?}", local_els, results);
+    if !test_val {
+        gather_debug!(&c.comm; "FAILED {:?}", results);
+    }
+
+    ensure_eq!(test_val, true);
+    s_timer.info_section(&format!("A2A TEST WITH {}", pp_size));
+    Ok(())
+}
+
 fn test_all2allv_size(c: &WorldComm, input_size: usize) -> Result<()> {
     let s_timer = SectionTimer::from_comm(&c.comm, ",");
     let part = InterleavedDist::new(input_size, c.size, c.rank);
-    let send_counts = init_a2a_snd_counts(&part)?;
+    let send_counts = init_a2av_snd_counts(&part)?;
     gather_debug!(
         &c.comm; "SND {:?} {}", send_counts, send_counts.iter().sum::<usize>()
     );
@@ -180,7 +203,7 @@ fn test_all2allv_size(c: &WorldComm, input_size: usize) -> Result<()> {
     }
 
     ensure_eq!(test_val, true);
-    s_timer.info_section(&format!("A2A TEST WITH {}", input_size));
+    s_timer.info_section(&format!("A2AV TEST WITH {}", input_size));
     Ok(())
 }
 
@@ -197,28 +220,30 @@ fn log_if_error<T>(ex: Result<T>, c: &WorldComm, tm: &str) {
 
 fn run(c: &WorldComm) {
     let _ = env_logger::try_init();
-    let ctimer: CumulativeTimer =  CumulativeTimer::from_comm(&c.comm, ";");
+    let ctimer: CumulativeTimer = CumulativeTimer::from_comm(&c.comm, ";");
+    log_if_error(test_all2all_size(c, 2), c, "A2A TEST");
+    log_if_error(test_all2all_size(c, 1024), c, "A2A TEST");
     log_if_error(test_scatterv_size(c, 1024 * 1024), c, "SCATTERV BIG 2^20");
     ctimer.reset();
     log_if_error(
         test_scatterv_size(c, 1024 * 1024 * 1024),
         c,
-        "SCATTER BIG 2^30",
+        "SCATTERV BIG 2^30",
     );
     ctimer.add_elapsed();
 
-    log_if_error(test_gatherv_size(c, 1024 * 1024), c, "GATHER BIG 2^20");
+    log_if_error(test_gatherv_size(c, 1024 * 1024), c, "GATHERV BIG 2^20");
     ctimer.reset();
     log_if_error(
         test_gatherv_size(c, 1024 * 1024 * 1024),
         c,
-        "GATHER BIG 2^30",
+        "GATHERV BIG 2^30",
     );
     ctimer.add_elapsed();
 
-    log_if_error(test_all2allv_size(c, 1024 * 1024), c, "A2A BIG 2^20");
+    log_if_error(test_all2allv_size(c, 1024 * 1024), c, "A2AV BIG 2^20");
     ctimer.reset();
-    log_if_error(test_all2allv_size(c, 1024 * 1024 * 1024), c, "A2A BIG 2^30");
+    log_if_error(test_all2allv_size(c, 1024 * 1024 * 1024), c, "A2AV BIG 2^30");
     ctimer.add_elapsed();
 
     if c.size >= 16 {
@@ -226,12 +251,12 @@ fn run(c: &WorldComm) {
         log_if_error(
             test_scatterv_size(c, 1024 * 1024 * 1024 * 16),
             c,
-            "SCATTER BIG 2^34",
+            "SCATTERV BIG 2^34",
         );
         log_if_error(
             test_gatherv_size(c, 1024 * 1024 * 1024 * 16),
             c,
-            "GATHER BIG 2^34",
+            "GATHERV BIG 2^34",
         );
         //log_if_error(
         //    test_gatherv_size(c, 1024 * 1024 * 1024 * 8),
@@ -241,7 +266,7 @@ fn run(c: &WorldComm) {
         log_if_error(
             test_all2allv_size(c, 1024 * 1024 * 1024 * 16),
             c,
-            "A2A BIG 2^34",
+            "A2AV BIG 2^34",
         );
     }
 
