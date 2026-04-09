@@ -39,7 +39,8 @@ pub enum Error {
 /// Broadcast one element via reference.
 ///
 /// # Description
-/// Input is mutable reference, input at the root process and output everywhere.  
+/// Broadcast the value refered at the root process and write to 
+/// the reference to the output reference everywhere.  
 ///
 /// # Arguments
 /// * `s_inout` - mutable reference input at the root, output everywhere.
@@ -74,7 +75,7 @@ pub fn bcast_one_ref<T>(
 /// Broadcast one element.
 ///
 /// # Description
-/// Broadcast one element, input is Some at the root, None everywhere.
+/// Broadcast one element, input is Some(T) at the root, None everywhere.
 ///
 /// # Arguments
 /// * `s_in` - Some(T) at the root, None everywhere.
@@ -173,7 +174,8 @@ where
 /// Broadcast a vector from the root process to all the processes.
 ///
 /// # Description
-/// Input is an option, the root process shouldn't be None.
+/// Broadcast is an option where input is at the root process, and 
+/// None everywhere.
 ///
 /// # Arguments
 /// * `s_in` - Optional Slice of T, Can not be None at root process 
