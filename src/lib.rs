@@ -7,18 +7,22 @@
 //!
 //! [mxx]: https://github.com/patflick/mxx
 
-pub mod bcast;
-pub mod big_collective;
-pub mod collective;
-pub mod comm;
-pub mod distribution;
-pub mod log;
-pub mod partition;
-pub mod reduction;
-pub mod shift;
-pub mod sort;
-pub mod timer;
-pub mod util;
+//
+// Copyright 2026 Georgia Institute of Technology
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
 
 use mpi::traits::Equivalence;
 use num::{FromPrimitive, Integer, ToPrimitive};
@@ -44,9 +48,13 @@ impl<
 /// All2allv arguments which includes send counts, send displacements,
 /// recieve counts and recieve displacements.
 pub struct All2allvArgs<T> {
+    // Vector of recieve counts
     pub rcv_cts: Vec<T>,
+    // Vector of recieve displacements
     pub rcv_disp: Vec<T>,
+    // Vector of send counts
     pub snd_cts: Vec<T>,
+    // Vector of send displacements
     pub snd_disp: Vec<T>,
 }
 
@@ -54,7 +62,7 @@ impl<T> All2allvArgs<T>
 where
     T: 'static + MCount,
 {
-    // Creates an empty All2allvArgs object with all members
+    /// Creates an empty All2allvArgs object with all members
     pub fn new(p: usize) -> Self {
         All2allvArgs {
             rcv_cts: vec![T::default(); p],
@@ -64,8 +72,8 @@ where
         }
     }
 
-    // Creates an object with provided counts, and displacements computed with
-    // exclusive prefix sum based on the counts
+    /// Creates an object with provided counts, and displacements computed with
+    /// exclusive prefix sum based on the counts
     pub fn from_counts<S: ToPrimitive>(
         send_counts: &[S],
         recv_counts: &[S],
@@ -89,7 +97,7 @@ where
         }
     }
 
-    // Creates an All2allvArgs<i32> object from the existing object
+    /// Creates an All2allvArgs<i32> object from the existing object
     pub fn to_i32(&self) -> All2allvArgs<i32> {
         All2allvArgs::<i32> {
             rcv_cts: self.rcv_cts.iter().map(|x| x.to_i32().unwrap()).collect(),
@@ -99,7 +107,7 @@ where
         }
     }
 
-    // Creates an All2allvArgs<usize> object from the existing object
+    /// Creates an All2allvArgs<usize> object from the existing object
     pub fn to_usize(&self) -> All2allvArgs<usize> {
         All2allvArgs::<usize> {
             rcv_cts: self.rcv_cts.iter().map(|x| x.to_usize().unwrap()).collect(),
@@ -117,6 +125,20 @@ where
         }
     }
 }
+
+pub mod bcast;
+pub mod big_collective;
+pub mod collective;
+pub mod comm;
+pub mod distribution;
+pub mod log;
+pub mod partition;
+pub mod reduction;
+pub mod shift;
+pub mod sort;
+pub mod timer;
+pub mod util;
+
 
 pub mod traits {
     pub use sope_derive::GEquivalence;

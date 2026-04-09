@@ -18,18 +18,24 @@ use mpi::{
     environment::Universe, topology::SimpleCommunicator, traits::Communicator,
 };
 
-///
 /// Light wapper around the SimpleCommunicator representing the default
 /// MPI_COMM_WORLD with process '0' as the root process
 pub struct WorldComm {
     _universe: Option<Universe>,
+    /// initialized mpi::topology::SimpleCommunicator
     pub comm: SimpleCommunicator,
+    // Rank of the current process
     pub rank: i32,
+    // Size of the MPI_COMM_WORLD
     pub size: i32,
 }
 
+/// Implementation of the WorldComm struct
 impl WorldComm {
     /// Calls MPI_Init
+    ///
+    /// # Description
+    /// Initiliaze the MPI Initialization of the MPI_COMM_WORLD.  
     pub fn init() -> Self {
         let (comm, _universe) = match mpi::initialize() {
             Some(universe) => (universe.world(), Some(universe)), // First time init
@@ -48,7 +54,7 @@ impl WorldComm {
         unsafe { mpi::ffi::MPI_Finalize() }
     }
 
-    /// Returns true if process id is 0, false otherwise
+    /// Returns true if rank of this process is 0, false otherwise
     pub fn is_root(&self) -> bool {
         self.rank == 0
     }
