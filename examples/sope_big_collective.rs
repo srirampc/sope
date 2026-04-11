@@ -1,11 +1,12 @@
 use anyhow::{Ok, Result};
 use mpi::collective::CommunicatorCollectives;
-use rand::RngExt;
+use rand::{RngExt, rngs::ThreadRng};
 use sope::{
-    big_collective::{
-        all2all_big_vec, all2allv_big_vec, gatherv_big_vec, scatterv_big_vec,
+    collective::{
+        all2all_big_vec, all2all_vec, all2allv_big_vec,
+        all2allv_via_scatter_big_vec, gatherv_big_vec, scatter_one,
+        scatterv_big_vec,
     },
-    collective::{all2all_vec, scatter_one},
     comm::WorldComm,
     cond_debug, cond_println, ensure_eq, gather_debug,
     partition::{Dist, InterleavedDist},
@@ -15,30 +16,70 @@ use sope::{
 };
 use std::iter::zip;
 
-fn init_gatherv_rcv_counts(part: &impl Dist) -> Result<Vec<usize>> {
-    let mut rng = rand::rng();
-    let mut round_about = |n: usize, fraction: usize| {
-        let rx = rng.random::<u64>() as usize;
-        n - n / fraction + (rx % (2 * (n / fraction)))
-    };
-    let c_size = part.comm_size();
-
-    let mut root_size = part.global_size();
-    let mut rcv_counts: Vec<usize> = vec![0; c_size as usize];
-    for i in 0..(c_size - 1) {
-        let s = round_about(part.local_size(), 10);
-        rcv_counts[i as usize] = s.min(root_size);
-        root_size -= s;
-    }
-    rcv_counts[c_size as usize - 1] = root_size;
-    Ok(rcv_counts)
+struct RandomCounts {
+    rng: ThreadRng,
 }
 
-fn test_gatherv_size(c: &WorldComm, input_size: usize) -> Result<()> {
+impl RandomCounts {
+    pub fn new() -> Self {
+        Self { rng: rand::rng() }
+    }
+
+    /// randomly selct a number that is approximately close to n
+    ///  between n + (n/fraction) and n - (n/fraction)
+    pub fn rand_approx(&mut self, n: usize, fraction: usize) -> usize {
+        let rx = self.rng.random::<u64>() as usize;
+        n - n / fraction + (rx % (2 * (n / fraction)))
+    }
+
+    /// randomly generate count that is approximately close to part's
+    /// local size with randomly chosen between
+    ///   local_counts + (local_counts/fraction) and  
+    ///   local_counts - (local_counts/fraction)
+    pub fn approx_split_counts(
+        &mut self,
+        part: &impl Dist,
+        fraction: usize,
+    ) -> Vec<usize> {
+        let comm_size = part.comm_size();
+        let mut target_size = part.global_size();
+        let mut counts: Vec<usize> = vec![0; comm_size as usize];
+        for i in 0..(comm_size - 1) {
+            let s = self.rand_approx(part.local_size(), fraction);
+            counts[i as usize] = s.min(target_size);
+            target_size -= s;
+        }
+        counts[comm_size as usize - 1] = target_size;
+        counts
+    }
+}
+
+/// Initialize No. Elements of Recieved guided by part by randomly
+fn gatherv_recv_counts(part: &impl Dist) -> Vec<usize> {
+    RandomCounts::new().approx_split_counts(part, part.comm_size() as usize)
+}
+
+/// Initialize No. Elements of Sent guided by part by randomly
+fn scatterv_snd_counts(part: &impl Dist) -> Vec<usize> {
+    RandomCounts::new().approx_split_counts(part, part.comm_size() as usize)
+}
+
+/// Initialize No. Elements of Sent in all2allv guided by part by randomly
+fn a2av_send_counts(part: &impl Dist) -> Vec<usize> {
+    let l_part = InterleavedDist::new(
+        part.local_size(),
+        part.comm_size() as i32,
+        part.comm_rank() as i32,
+    );
+
+    RandomCounts::new().approx_split_counts(&l_part, part.comm_size() as usize)
+}
+
+fn test_gatherv(c: &WorldComm, input_size: usize) -> Result<()> {
     let s_timer = SectionTimer::from_comm(&c.comm, ",");
     let part = InterleavedDist::new(input_size, c.size, c.rank);
     let (rcv_data, rcv_counts) = if c.rank == 0 {
-        let rcv_counts = init_gatherv_rcv_counts(&part)?;
+        let rcv_counts = gatherv_recv_counts(&part);
         let rcv_total: usize = rcv_counts.iter().sum();
         let rcv_data: Vec<i32> = vec![0; rcv_total];
         (Some(rcv_data), Some(rcv_counts))
@@ -47,7 +88,6 @@ fn test_gatherv_size(c: &WorldComm, input_size: usize) -> Result<()> {
     };
     let snd_size: usize = scatter_one(rcv_counts.as_deref(), 0, &c.comm)?;
     let snd_data: Vec<i32> = std::iter::repeat_n(c.rank, snd_size).collect();
-
     gather_debug!(&c.comm;"G  : {} {}", snd_size, snd_data.len());
 
     let result = gatherv_big_vec(&snd_data, rcv_counts.as_deref(), 0, &c.comm)?;
@@ -71,35 +111,15 @@ fn test_gatherv_size(c: &WorldComm, input_size: usize) -> Result<()> {
         true
     };
     ensure_eq!(all_of(rcv_test, &c.comm), true);
-
     s_timer.info_section(&format!("GATHERV TEST WITH {}", input_size));
     Ok(())
 }
 
-fn init_scatterv_snd_counts(part: &impl Dist) -> Result<Vec<usize>> {
-    let mut rng = rand::rng();
-    let mut round_about = |n: usize, fraction: usize| {
-        let rx = rng.random::<u64>() as usize;
-        n - n / fraction + (rx % (2 * (n / fraction)))
-    };
-    let c_size = part.comm_size();
-
-    let mut root_size = part.global_size();
-    let mut send_counts: Vec<usize> = vec![0; c_size as usize];
-    for i in 0..(c_size - 1) {
-        let s = round_about(part.local_size(), 10);
-        send_counts[i as usize] = s.min(root_size);
-        root_size -= s;
-    }
-    send_counts[c_size as usize - 1] = root_size;
-    Ok(send_counts)
-}
-
-fn test_scatterv_size(c: &WorldComm, input_size: usize) -> Result<()> {
+fn test_scatterv(c: &WorldComm, input_size: usize) -> Result<()> {
     let s_timer = SectionTimer::from_comm(&c.comm, ",");
     let (snd_data, send_counts) = if c.rank == 0 {
         let part = InterleavedDist::new(input_size, c.size, c.rank);
-        let counts = init_scatterv_snd_counts(&part)?;
+        let counts = scatterv_snd_counts(&part);
 
         // fill in data
         let n_total: usize = counts.iter().sum();
@@ -131,29 +151,7 @@ fn test_scatterv_size(c: &WorldComm, input_size: usize) -> Result<()> {
     Ok(())
 }
 
-fn init_a2av_snd_counts(part: &impl Dist) -> Result<Vec<usize>> {
-    let mut rng = rand::rng();
-    let mut round_about = |n: usize, fraction: usize| {
-        let rx = rng.random::<u64>() as usize;
-        n - n / fraction + (rx % (2 * (n / fraction)))
-    };
-    let c_size = part.comm_size();
-    let c_rank = part.comm_rank();
-    let mut local_size = part.local_size();
-    let local_part =
-        InterleavedDist::new(local_size, c_size as i32, c_rank as i32);
-    let mut send_counts: Vec<usize> = vec![0; c_size as usize];
-    for i in 0..(c_size - 1) {
-        let s = round_about(local_part.local_size(), 10);
-        send_counts[i as usize] = s.min(local_size);
-        local_size -= s;
-    }
-    send_counts[c_size as usize - 1] = local_size;
-
-    Ok(send_counts)
-}
-
-fn test_all2all_size(c: &WorldComm, pp_size: usize) -> Result<()> {
+fn test_all2all(c: &WorldComm, pp_size: usize) -> Result<()> {
     let s_timer = SectionTimer::from_comm(&c.comm, ",");
     // fill in data
     let mut local_els: Vec<i32> = (0..c.size)
@@ -174,10 +172,10 @@ fn test_all2all_size(c: &WorldComm, pp_size: usize) -> Result<()> {
     Ok(())
 }
 
-fn test_all2allv_size(c: &WorldComm, input_size: usize) -> Result<()> {
+fn test_all2allv(c: &WorldComm, input_size: usize) -> Result<()> {
     let s_timer = SectionTimer::from_comm(&c.comm, ",");
     let part = InterleavedDist::new(input_size, c.size, c.rank);
-    let send_counts = init_a2av_snd_counts(&part)?;
+    let send_counts = a2av_send_counts(&part);
     gather_debug!(
         &c.comm; "SND {:?} {}", send_counts, send_counts.iter().sum::<usize>()
     );
@@ -207,6 +205,43 @@ fn test_all2allv_size(c: &WorldComm, input_size: usize) -> Result<()> {
     Ok(())
 }
 
+fn test_all2allv_via_scatter(c: &WorldComm, input_size: usize) -> Result<()> {
+    let s_timer = SectionTimer::from_comm(&c.comm, ",");
+    let part = InterleavedDist::new(input_size, c.size, c.rank);
+    let send_counts = a2av_send_counts(&part);
+    gather_debug!(
+        &c.comm; "SND {:?} {}", send_counts, send_counts.iter().sum::<usize>()
+    );
+
+    // fill in data
+    let mut local_els: Vec<i32> = send_counts
+        .iter()
+        .enumerate()
+        .flat_map(|(i, ncts)| std::iter::repeat_n(i as i32, *ncts))
+        .collect();
+    ensure_eq!(local_els.len(), part.local_size());
+
+    let recv_counts = all2all_vec(&send_counts, &c.comm)?;
+    let mut results = all2allv_via_scatter_big_vec(
+        &local_els,
+        &send_counts,
+        &recv_counts,
+        &c.comm,
+    )?;
+    let test_val = results.iter().all(|x| *x == c.rank);
+
+    results.dedup();
+    local_els.dedup();
+    gather_debug!(&c.comm; "R {:?} {:?}", local_els, results);
+    if !test_val {
+        gather_debug!(&c.comm; "FAILED {:?}", results);
+    }
+
+    ensure_eq!(test_val, true);
+    s_timer.info_section(&format!("A2AV VIA SCATTER TEST WITH {}", input_size));
+    Ok(())
+}
+
 fn log_if_error<T>(ex: Result<T>, c: &WorldComm, tm: &str) {
     if any_of(ex.is_err(), &c.comm) {
         sope::gather_error!(
@@ -220,41 +255,47 @@ fn log_if_error<T>(ex: Result<T>, c: &WorldComm, tm: &str) {
 
 fn run(c: &WorldComm) {
     let _ = env_logger::try_init();
+    log_if_error(test_all2all(c, 2), c, "A2A TEST");
+    log_if_error(test_all2all(c, 1024), c, "A2A TEST");
+
     let ctimer: CumulativeTimer = CumulativeTimer::from_comm(&c.comm, ";");
-    log_if_error(test_all2all_size(c, 2), c, "A2A TEST");
-    log_if_error(test_all2all_size(c, 1024), c, "A2A TEST");
-    log_if_error(test_scatterv_size(c, 1024 * 1024), c, "SCATTERV BIG 2^20");
+    log_if_error(test_scatterv(c, 1024 * 1024), c, "SCATTERV BIG 2^20");
     ctimer.reset();
-    log_if_error(
-        test_scatterv_size(c, 1024 * 1024 * 1024),
-        c,
-        "SCATTERV BIG 2^30",
-    );
+    log_if_error(test_scatterv(c, 1024 * 1024 * 1024), c, "SCATTERV BIG 2^30");
     ctimer.add_elapsed();
 
-    log_if_error(test_gatherv_size(c, 1024 * 1024), c, "GATHERV BIG 2^20");
+    log_if_error(test_gatherv(c, 1024 * 1024), c, "GATHERV BIG 2^20");
     ctimer.reset();
-    log_if_error(
-        test_gatherv_size(c, 1024 * 1024 * 1024),
-        c,
-        "GATHERV BIG 2^30",
-    );
+    log_if_error(test_gatherv(c, 1024 * 1024 * 1024), c, "GATHERV BIG 2^30");
     ctimer.add_elapsed();
 
-    log_if_error(test_all2allv_size(c, 1024 * 1024), c, "A2AV BIG 2^20");
+    log_if_error(test_all2allv(c, 1024 * 1024), c, "A2AV BIG 2^20");
     ctimer.reset();
-    log_if_error(test_all2allv_size(c, 1024 * 1024 * 1024), c, "A2AV BIG 2^30");
+    log_if_error(test_all2allv(c, 1024 * 1024 * 1024), c, "A2AV BIG 2^30");
+    ctimer.add_elapsed();
+
+    log_if_error(
+        test_all2allv_via_scatter(c, 1024 * 1024),
+        c,
+        "A2AV VIA SCTTER BIG 2^20",
+    );
+    ctimer.reset();
+    log_if_error(
+        test_all2allv_via_scatter(c, 1024 * 1024 * 1024),
+        c,
+        "A2AV VIA SCTTER BIG 2^30",
+    );
     ctimer.add_elapsed();
 
     if c.size >= 16 {
         // this takes forever ?
         log_if_error(
-            test_scatterv_size(c, 1024 * 1024 * 1024 * 16),
+            test_scatterv(c, 1024 * 1024 * 1024 * 16),
             c,
             "SCATTERV BIG 2^34",
         );
         log_if_error(
-            test_gatherv_size(c, 1024 * 1024 * 1024 * 16),
+            test_gatherv(c, 1024 * 1024 * 1024 * 16),
             c,
             "GATHERV BIG 2^34",
         );
@@ -264,13 +305,18 @@ fn run(c: &WorldComm) {
         //    "GATHER BIG 2^33",
         //);
         log_if_error(
-            test_all2allv_size(c, 1024 * 1024 * 1024 * 16),
+            test_all2allv(c, 1024 * 1024 * 1024 * 16),
             c,
             "A2AV BIG 2^34",
         );
+        log_if_error(
+            test_all2allv_via_scatter(c, 1024 * 1024 * 1024 * 16),
+            c,
+            "A2AV VIA SCATTER BIG 2^34",
+        );
     }
 
-    std::thread::sleep(std::time::Duration::from_millis(1000));
+    std::thread::sleep(std::time::Duration::from_millis(2000));
     c.comm.barrier();
     ctimer.info_region("TOTAL 2^30");
     cond_println!(c.is_root(); "BIG COLLECTIVES TEST COMPLETED");

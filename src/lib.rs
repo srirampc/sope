@@ -127,7 +127,6 @@ where
 }
 
 pub mod bcast;
-pub mod big_collective;
 pub mod collective;
 pub mod comm;
 pub mod distribution;

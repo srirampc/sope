@@ -24,10 +24,10 @@ use rand::{RngExt, SeedableRng};
 use sope::{
     All2allvArgs,
     collective::{
-        all2all, all2all_vec, all2allv, all2allv_vec, allgather, allgather_one,
-        allgather_vec, allgatherv, allgatherv_vec, gather, gather_one,
-        gather_vec, gatherv, gatherv_vec, scatter, scatter_one, scatter_vec,
-        scatterv, scatterv_vec,
+        all2all, all2all_vec, all2allv, all2allv_vec, all2allv_via_scatter,
+        all2allv_via_scatter_vec, allgather, allgather_one, allgather_vec,
+        allgatherv, allgatherv_vec, gather, gather_one, gather_vec, gatherv,
+        gatherv_vec, scatter, scatter_one, scatter_vec, scatterv, scatterv_vec,
     },
     comm::WorldComm,
     cond_info, cond_println, ensure_eq,
@@ -415,6 +415,52 @@ fn test_all2allv(c: &WorldComm) -> Result<()> {
     Ok(())
 }
 
+fn test_all2allv_via_scatter(c: &WorldComm) -> Result<()> {
+    let rng = ChaCha8Rng::seed_from_u64(0);
+    let send_counts: Vec<i32> = (0..c.size)
+        .map(|i| 2 * c.rank + 3 * (c.size - i - 1))
+        .collect();
+    let recv_counts: Vec<i32> = (0..c.size)
+        .map(|i| 2 * i + 3 * (c.size - c.rank - 1))
+        .collect();
+    let nsend = send_counts.iter().sum::<i32>() as usize;
+    let nrecv = recv_counts.iter().sum::<i32>() as usize;
+    let a_itr = (0..c.size)
+        .flat_map(|i| repeat_n(c.rank * i, send_counts[i as usize] as usize));
+    let b_itr = rng.random_iter::<f32>().take(nsend);
+    let msgs: Vec<CPair> = zip(a_itr, b_itr)
+        .map(|(a, b)| CPair::new(a, 1.0 / b))
+        .collect();
+
+    let mut result = vec![CPair::default(); nrecv];
+    let params = All2allvArgs::<i32>::from_counts(&send_counts, &recv_counts);
+    all2allv_via_scatter(&msgs, &mut result, &params, &c.comm)?;
+
+    let mut pos: usize = 0;
+    for i in 0..c.size {
+        for _j in 0..recv_counts[i as usize] {
+            ensure_eq!(i * c.rank, result[pos].a);
+            result[pos].b *= result[pos].b;
+            pos += 1;
+        }
+    }
+
+    let send_counts2: Vec<usize> =
+        recv_counts.iter().map(|x| *x as usize).collect();
+    let recv_counts2: Vec<usize> =
+        send_counts.iter().map(|x| *x as usize).collect();
+    let result2 =
+        all2allv_via_scatter_vec(&result, &send_counts2, &recv_counts2, &c.comm)?;
+
+    ensure_eq!(result2.len(), msgs.len());
+    for (r2, m) in zip(result2.iter(), msgs.iter()) {
+        ensure_eq!(r2.a, m.a);
+        ensure_eq!(r2.b, m.b * m.b);
+    }
+
+    Ok(())
+}
+
 fn log_if_error<T>(ex: Result<T>, c: &WorldComm, tm: &str) {
     if any_of(ex.is_err(), &c.comm) {
         sope::gather_error!(
@@ -439,6 +485,7 @@ fn run(c: &WorldComm) {
     log_if_error(test_allgatherv(c), c, "ALLGATHERV");
     log_if_error(test_all2all(c), c, "ALL2ALL");
     log_if_error(test_all2allv(c), c, "ALL2ALLV");
+    log_if_error(test_all2allv_via_scatter(c), c, "ALL2ALLV SCATTER");
     c.comm.barrier();
     cond_println!(c.is_root(); "BROADCAST TEST COMPLETED");
 }

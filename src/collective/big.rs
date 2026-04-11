@@ -1,12 +1,14 @@
-use anyhow::{Ok, Result, bail};
-use mpi::traits::{Communicator, Destination, Equivalence, Source};
+use anyhow::{Ok, Result};
+use mpi::traits::{
+    Communicator, CommunicatorCollectives, Destination, Equivalence, Source,
+};
+use std::iter::zip;
 
-use crate::reduction::any_of;
-use crate::util::exc_prefix_sum;
-use crate::{All2allvArgs, MCount};
-use crate::{
-    collective::{Error as CollError, scatter_one},
-    reduction::all_of,
+use crate::{All2allvArgs, MCount, util::exc_prefix_sum};
+
+use super::{
+    scatter_one, validate_all2all, validate_all2allv, validate_gatherv,
+    validate_scatterv,
 };
 
 pub fn scatterv_big<T>(
@@ -19,50 +21,30 @@ pub fn scatterv_big<T>(
 where
     T: Equivalence + Clone,
 {
+    let rcv_size = validate_scatterv(s_in, s_out, send_sizes, root, comm)?;
     let s_in = s_in.unwrap_or(&[]);
     let send_sizes = send_sizes.unwrap_or(&[]);
-    if !any_of(
-        comm.rank() == root
-            && !s_in.is_empty()
-            && send_sizes.len() >= comm.size() as usize
-            && s_in.len() >= send_sizes.iter().sum::<usize>(),
-        comm,
-    ) {
-        bail!(CollError::InSliceError(
-            "scatterv input size @ root should be >= sum of send_sizes"
-                .to_string()
-        ))
-    }
-
-    let o_size = scatter_one(Some(send_sizes), root, comm)?;
-    if !all_of(
-        if o_size == 0 {
-            s_out.is_empty()
-        } else {
-            s_out.len() >= o_size
-        },
-        comm,
-    ) {
-        bail!(CollError::OutSliceLengthError(o_size, s_out.len()));
-    }
-
     let send_offsets: Vec<usize> =
         exc_prefix_sum(send_sizes.iter().cloned(), 1usize);
 
     // TODO:: send with tag?
     mpi::request::multiple_scope(comm.size() as usize, |scope, coll| {
         if comm.rank() == root {
-            for i in 0..comm.size() {
-                let offset = send_offsets[i as usize];
-                let st = offset..(offset + send_sizes[i as usize]);
-                if i != root {
-                    // Do an immediate send
-                    let dest_process = comm.process_at_rank(i);
-                    let req = dest_process.immediate_send(scope, &s_in[st]);
-                    coll.add(req);
+            for (iu, (s_size, s_offset)) in
+                zip(send_sizes.iter(), send_offsets.iter()).enumerate()
+            {
+                let i = iu as i32;
+                if i == root || *s_size == 0 {
+                    continue;
                 }
+                // Do an immediate send to everyone but root
+                let st = *s_offset..(*s_offset + *s_size);
+                let dest_process = comm.process_at_rank(i);
+                let req = dest_process.immediate_send(scope, &s_in[st]);
+                coll.add(req);
             }
-        } else {
+        } else if rcv_size > 0 {
+            // immediate recieve from everyone
             let root_process = comm.process_at_rank(root);
             let req = root_process.immediate_receive_into(scope, &mut s_out[..]);
             coll.add(req);
@@ -73,6 +55,7 @@ where
         coll.wait_all(&mut result);
     });
 
+    // Sending to self
     if comm.rank() == root && send_sizes[root as usize] > 0 {
         // directly copy to output
         let offset = send_offsets[root as usize];
@@ -107,30 +90,15 @@ pub fn gatherv_big<T>(
 where
     T: Equivalence + Clone + Default,
 {
-    let s_len = scatter_one(recv_sizes, root, comm)?;
-    let i_len = s_in.len();
-    if !all_of(
-        if s_len == 0 {
-            s_in.is_empty()
-        } else {
-            i_len >= s_len
-        },
+    let snd_size = validate_gatherv(
+        s_in,
+        s_out.as_ref().map(|x| x.as_ref()),
+        recv_sizes,
+        root,
         comm,
-    ) {
-        bail!(CollError::InSliceError(format!(
-            "gather input size should be atleast recv_sizes @ root: R({s_len}) != IN({i_len})."
-        )))
-    }
-
+    )?;
     let s_out = s_out.unwrap_or(&mut []);
     let recv_sizes = recv_sizes.unwrap_or(&[]);
-    let exp_osize = recv_sizes.iter().sum::<usize>();
-    if !any_of(
-        comm.rank() == root && exp_osize > 0 && exp_osize <= s_out.len(),
-        comm,
-    ) {
-        bail!(CollError::OutSliceLengthError(exp_osize, s_out.len()));
-    }
 
     let mut rcv_buff: Vec<Vec<T>> = if comm.rank() == root {
         recv_sizes
@@ -146,14 +114,15 @@ where
         if comm.rank() == root {
             //recivers
             for (ui, s_rcv_buf) in rcv_buff.iter_mut().enumerate() {
-                if ui as i32 != comm.rank() {
-                    let snd_process = comm.process_at_rank(ui as i32);
-                    let req = snd_process
-                        .immediate_receive_into(scope, &mut s_rcv_buf[..]);
-                    coll.add(req);
+                if ui as i32 == comm.rank() || s_rcv_buf.is_empty() {
+                    continue;
                 }
+                let snd_process = comm.process_at_rank(ui as i32);
+                let req =
+                    snd_process.immediate_receive_into(scope, &mut s_rcv_buf[..]);
+                coll.add(req);
             }
-        } else {
+        } else if snd_size > 0 {
             let root_process = comm.process_at_rank(root);
             let req = root_process.immediate_send(scope, s_in);
             coll.add(req);
@@ -169,7 +138,11 @@ where
         let mut rcv_offset = 0;
         for i in 0..comm.size() {
             let ui = i as usize;
-            let r_range = rcv_offset..(rcv_offset + recv_sizes[ui]);
+            let r_size = recv_sizes[ui];
+            if r_size == 0 {
+                continue;
+            }
+            let r_range = rcv_offset..(rcv_offset + r_size);
             if i != comm.rank() {
                 s_out[r_range].clone_from_slice(&rcv_buff[ui]);
             } else {
@@ -210,41 +183,33 @@ pub fn all2all_big<T>(
 where
     T: Equivalence + Clone + Default,
 {
-    if !all_of(
-        !a_in.is_empty() && a_in.len().is_multiple_of(comm.size() as usize),
-        comm,
-    ) {
-        bail!(CollError::InSliceError(
-            "all2all input len should be multiple of p.".to_string()
-        ));
-    }
-    if !all_of(a_out.len() == a_in.len(), comm) {
-        bail!(CollError::OutSliceLengthError(a_in.len(), a_out.len()));
-    }
+    validate_all2all(a_in, a_out, comm)?;
     // n elements to recieve per processor
-    let nrcv_pp = a_in.len() / (comm.size() as usize);
+    let npp = a_in.len() / (comm.size() as usize);
     let mut rcv_buff: Vec<Vec<T>> =
-        (0..comm.size()).map(|_i| vec![T::default(); nrcv_pp]).collect();
+        (0..comm.size()).map(|_i| vec![T::default(); npp]).collect();
 
     mpi::request::multiple_scope(2 * comm.size() as usize, |scope, coll| {
         //senders
         for i in 0..comm.size() {
-            if i != comm.rank() {
-                let ui = i as usize;
-                let dest_process = comm.process_at_rank(i);
-                let snd_offset = ui * nrcv_pp;
-                let s_range = snd_offset..(snd_offset + nrcv_pp);
-                let req = dest_process.immediate_send(scope, &a_in[s_range]);
-                coll.add(req);
+            if i == comm.rank() {
+                continue;
             }
+            let ui = i as usize;
+            let dest_process = comm.process_at_rank(i);
+            let snd_offset = ui * npp;
+            let s_range = snd_offset..(snd_offset + npp);
+            let req = dest_process.immediate_send(scope, &a_in[s_range]);
+            coll.add(req);
         }
         for (ui, s_rcv_buf) in rcv_buff.iter_mut().enumerate() {
-            if ui != comm.rank() as usize {
-                let snd_process = comm.process_at_rank(ui as i32);
-                let req =
-                    snd_process.immediate_receive_into(scope, &mut s_rcv_buf[..]);
-                coll.add(req);
+            let i = ui as i32;
+            if i == comm.rank() {
+                continue;
             }
+            let src_proc = comm.process_at_rank(i);
+            let req = src_proc.immediate_receive_into(scope, &mut s_rcv_buf[..]);
+            coll.add(req);
         }
         // Wait for all of them to complete
         let mut result = vec![];
@@ -253,18 +218,18 @@ where
 
     for i in 0..comm.size() {
         let ui = i as usize;
-        let rcv_offset = ui * nrcv_pp;
-        let r_range = rcv_offset..(rcv_offset + nrcv_pp);
+        let rcv_offset = ui * npp;
+        let r_range = rcv_offset..(rcv_offset + npp);
         if i != comm.rank() {
             a_out[r_range].clone_from_slice(&rcv_buff[ui]);
         } else {
             // directly copy to output
-            let snd_offset = ui * nrcv_pp;
-            let s_range = snd_offset..(snd_offset + nrcv_pp);
+            let snd_offset = ui * npp;
+            let s_range = snd_offset..(snd_offset + npp);
             a_out[r_range].clone_from_slice(&a_in[s_range]);
         }
     }
- 
+
     Ok(())
 }
 
@@ -293,26 +258,32 @@ where
         .collect();
     mpi::request::multiple_scope(2 * comm.size() as usize, |scope, coll| {
         //senders
-        for i in 0..comm.size() {
-            if i != comm.rank() {
-                let ui = i as usize;
-                let snd_offset = uargs.snd_disp[ui];
-                let s_range = snd_offset..(snd_offset + uargs.snd_cts[ui]);
-                // Do an immediate send
-                let dest_process = comm.process_at_rank(i);
-                let req = dest_process.immediate_send(scope, &s_in[s_range]);
-                coll.add(req);
+        for (ui, (snd_offset, snd_count)) in
+            zip(uargs.snd_disp.iter(), uargs.snd_cts.iter()).enumerate()
+        {
+            let i = ui as i32;
+            if i == comm.rank() || *snd_count == 0 {
+                continue;
             }
+            let s_range = *snd_offset..(*snd_offset + *snd_count);
+            // Do an immediate send
+            let dest_process = comm.process_at_rank(i);
+            let req = dest_process.immediate_send(scope, &s_in[s_range]);
+            coll.add(req);
         }
 
         //recivers
-        for (ui, s_rcv_buf) in rcv_buff.iter_mut().enumerate() {
-            if ui != comm.rank() as usize {
-                let snd_process = comm.process_at_rank(ui as i32);
-                let req =
-                    snd_process.immediate_receive_into(scope, &mut s_rcv_buf[..]);
-                coll.add(req);
+        for (ui, (s_rcv_buf, rcv_count)) in
+            zip(rcv_buff.iter_mut(), uargs.rcv_cts.iter()).enumerate()
+        {
+            let i = ui as i32;
+            if i == comm.rank() || *rcv_count == 0 {
+                continue;
             }
+            let snd_process = comm.process_at_rank(i);
+            let req =
+                snd_process.immediate_receive_into(scope, &mut s_rcv_buf[..]);
+            coll.add(req);
         }
         // Wait for all of them to complete
         let mut result = vec![];
@@ -322,6 +293,9 @@ where
     // copy to output slice
     for i in 0..comm.size() {
         let ui = i as usize;
+        if uargs.rcv_cts[ui] == 0 {
+            continue;
+        }
         let rcv_offset = uargs.rcv_disp[ui];
         let r_range = rcv_offset..(rcv_offset + uargs.rcv_cts[ui]);
         if i != comm.rank() {
@@ -346,32 +320,7 @@ pub fn all2allv_big_slice<T>(
 where
     T: Equivalence + Clone + Default,
 {
-    let send_total: usize = send_counts.iter().sum();
-    if !all_of(
-        if send_total == 0 {
-            s_in.is_empty()
-        } else {
-            s_in.len() >= send_total
-        },
-        comm,
-    ) {
-        bail!(CollError::InSliceError(
-            "all2allv input slice length should be sum of send counts"
-                .to_string()
-        ));
-    }
-    let recv_total: usize = recv_counts.iter().sum();
-    if !all_of(
-        if recv_total == 0 {
-            s_out.is_empty()
-        } else {
-            recv_total <= s_out.len()
-        },
-        comm,
-    ) {
-        bail!(CollError::OutSliceLengthError(recv_total, s_out.len()));
-    }
-
+    validate_all2allv(s_in, s_out, send_counts, recv_counts, comm)?;
     let params = All2allvArgs::<usize>::from_counts(send_counts, recv_counts);
     all2allv_big(s_in, s_out, &params, comm)
 }
@@ -388,5 +337,69 @@ where
     let recv_total: usize = recv_counts.iter().sum();
     let mut rcv_vec = vec![T::default(); recv_total];
     all2allv_big_slice(s_in, &mut rcv_vec, send_counts, recv_counts, comm)?;
+    Ok(rcv_vec)
+}
+
+pub fn all2allv_via_scatter_big<T, S>(
+    s_in: &[T],
+    s_out: &mut [T],
+    args: &All2allvArgs<S>,
+    comm: &dyn Communicator,
+) -> Result<()>
+where
+    T: Equivalence + Clone + Default,
+    S: 'static + MCount,
+{
+    let uargs = args.to_usize();
+    for (ui, (rcv_start, rcv_size)) in
+        zip(args.rcv_disp.iter(), args.rcv_cts.iter()).enumerate()
+    {
+        let i = ui as i32;
+        let rcv_start = rcv_start.to_usize().unwrap();
+        let rcv_size = rcv_size.to_usize().unwrap();
+        let rcv_s_out = &mut s_out[rcv_start..rcv_start + rcv_size];
+        if i == comm.rank() {
+            scatterv_big(Some(s_in), rcv_s_out, Some(&uargs.snd_cts), i, comm)?;
+        } else {
+            scatterv_big(None, rcv_s_out, None, i, comm)?;
+        }
+        comm.barrier();
+    }
+    Ok(())
+}
+
+pub fn all2allv_via_scatter_big_slice<T>(
+    s_in: &[T],
+    s_out: &mut [T],
+    send_counts: &[usize],
+    recv_counts: &[usize],
+    comm: &dyn Communicator,
+) -> Result<()>
+where
+    T: Equivalence + Clone + Default,
+{
+    validate_all2allv(s_in, s_out, send_counts, recv_counts, comm)?;
+    let params = All2allvArgs::<usize>::from_counts(send_counts, recv_counts);
+    all2allv_via_scatter_big(s_in, s_out, &params, comm)
+}
+
+pub fn all2allv_via_scatter_big_vec<T>(
+    s_in: &[T],
+    send_counts: &[usize],
+    recv_counts: &[usize],
+    comm: &dyn Communicator,
+) -> Result<Vec<T>>
+where
+    T: Equivalence + Default + Clone,
+{
+    let recv_total: usize = recv_counts.iter().sum();
+    let mut rcv_vec = vec![T::default(); recv_total];
+    all2allv_via_scatter_big_slice(
+        s_in,
+        &mut rcv_vec,
+        send_counts,
+        recv_counts,
+        comm,
+    )?;
     Ok(rcv_vec)
 }
