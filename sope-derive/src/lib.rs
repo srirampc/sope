@@ -95,10 +95,11 @@ pub fn derive_mpi_datatype(input: TokenStream) -> TokenStream {
                 use ::std::sync::Mutex;
                 use ::std::collections::HashMap;
                 use ::std::any::TypeId;
+                use ::std::sync::LazyLock;
                 use ::mpi::datatype::{UncommittedDatatypeRef, UserDatatype};
 
-                static DTYPE_MAP: ::once_cell::sync::Lazy<Mutex<HashMap<TypeId, &'static UserDatatype>>> =
-                    ::once_cell::sync::Lazy::new(|| Mutex::new(HashMap::new()));
+                static DTYPE_MAP: LazyLock<Mutex<HashMap<TypeId, &'static UserDatatype>>> =
+                    LazyLock::new(|| Mutex::new(HashMap::new()));
 
                 let mut map = DTYPE_MAP.lock().unwrap();
                 let type_id = TypeId::of::<Self>();
