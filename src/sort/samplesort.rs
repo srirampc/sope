@@ -1,3 +1,45 @@
+//! Parallel sample sort.
+//!
+//! Implements a classical distributed sample-sort:
+//!
+//! 1. Locally sort each rank's slice.
+//! 2. Pick `s = p - 1` evenly spaced samples per rank
+//!    ([`sample_block_decomp`] when the input is already
+//!    block-balanced, [`sample_arbit_decomp`] otherwise).
+//! 3. Sort the gathered samples with [`bitonic_sort`] and pick the
+//!    last sample of every rank (except the last) as the global
+//!    splitters; allgather them to obtain `p - 1` splitters
+//!    everywhere.
+//! 4. Locally bucket each rank's data into `p` buckets using the
+//!    splitters ([`split`] for the unstable variant or
+//!    [`stable_split`] for the stable variant, the latter routes
+//!    runs of equal splitters to a deterministic destination so
+//!    that order is preserved).
+//! 5. Exchange buckets via `MPI_Alltoallv`
+//!    ([`crate::collective::all2allv_vec`]).
+//! 6. Locally re-sort the received elements (or multi-way merge).
+//! 7. Re-balance into the original distribution using
+//!    [`crate::distribution::stable_distribute`] or
+//!    [`crate::distribution::arbit_distribute`].
+//!
+//! Public entry point is [`samplesort`].
+
+//
+// Copyright 2026 Georgia Institute of Technology
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
 use anyhow::{Ok, Result, bail};
 use mpi::{topology::Communicator, traits::Equivalence};
 use std::cmp::Ordering;
@@ -12,6 +54,24 @@ use crate::{
     util::equal_range_by,
 };
 
+/// Pick `p - 1` global splitters when the input is arbitrarily
+/// distributed.
+///
+/// # Description
+/// Each rank picks samples at positions proportional to its share
+/// of the global size (so larger ranks contribute more samples).
+/// The total number of sampled elements is `s * p`. Samples are
+/// then re-balanced across processes via
+/// [`crate::distribution::distribute_vec`] onto a [`ModuloDist`],
+/// truncated to exactly `s` samples per rank, sorted across ranks
+/// with [`bitonic_sort`], and the last sample of each rank (except
+/// the last one) is allgathered to form the global splitters.
+///
+/// # Errors
+/// * [`super::Error::SampleSizeError`] when the global size is
+///   smaller than `s * p`.
+/// * [`super::Error::SplitterSizeError`] when the redistributed
+///   per-rank splitter count drops below `s`.
 pub fn sample_arbit_decomp<T, F>(
     t_in: &[T],
     compare: F,
@@ -98,6 +158,20 @@ where
     allgatherv_vec(&sv, &recv_sizes, comm)
 }
 
+/// Pick `p - 1` global splitters when the input is block-decomposed.
+///
+/// # Description
+/// Faster path used when every rank has roughly the same number of
+/// elements (`local_size > 0` everywhere). Each rank picks `s`
+/// equally-spaced samples from its already-sorted local slice
+/// (one sample per "bucket" of size `local_size / (s + 1)`), the
+/// per-rank samples are sorted across ranks with [`bitonic_sort`],
+/// and the last sample of each rank (except the last) is
+/// allgathered to form the global splitters.
+///
+/// # Errors
+/// [`super::Error::SampleSizeError`] when any rank has an empty
+/// local slice.
 pub fn sample_block_decomp<T, F>(
     t_in: &mut [T],
     compare: F,
@@ -147,6 +221,28 @@ where
     Ok(result_splitters)
 }
 
+/// Compute per-bucket send counts for the unstable variant of
+/// sample sort.
+///
+/// # Description
+/// Walks `tsl` in sorted order using [`equal_range_by`] to locate
+/// each splitter and assigns elements to processes:
+///
+/// * elements strictly less than splitter `i` are routed to rank
+///   `i`,
+/// * runs of elements equal to one or more consecutive splitters
+///   are *split fairly* across the relevant ranks based on their
+///   target [`ModuloDist`] sizes (so that the resulting
+///   distribution is approximately balanced).
+///
+/// The function returns the per-rank send counts; the caller is
+/// expected to perform the all-to-allv exchange. An invariant
+/// check verifies that `sum(send_counts) == local_size`.
+///
+/// # Errors
+/// * [`super::Error::SplitterSizeError`] if `splitters.len() != p - 1`.
+/// * [`super::Error::SortInvariantError`] if the invariant on
+///   `send_counts` is violated.
 fn split<T, F>(
     tsl: &mut [T],
     splitters: &[T],
@@ -216,6 +312,22 @@ where
     Ok(send_counts)
 }
 
+/// Compute per-bucket send counts for the stable variant of sample
+/// sort.
+///
+/// # Description
+/// Stable counterpart of [`split`]. Elements strictly less than a
+/// splitter are routed deterministically to the rank immediately
+/// to its left; runs of equal splitters are not split arbitrarily
+/// but instead routed to a single deterministic destination (chosen
+/// from the rank's position relative to the run length). This
+/// guarantees that elements that compare equal preserve their
+/// relative order across the global sort.
+///
+/// # Errors
+/// * [`super::Error::SplitterSizeError`] if `splitters.len() != p - 1`.
+/// * [`super::Error::SortInvariantError`] if the invariant on
+///   `send_counts` is violated.
 fn stable_split<T, F>(
     tsl: &mut [T],
     splitters: &[T],
@@ -283,6 +395,33 @@ where
     Ok(send_counts)
 }
 
+/// Distributed parallel sample sort.
+///
+/// # Description
+/// Sorts `tsl` across the communicator. The high-level steps are:
+///
+/// 1. Local sort (stable or unstable depending on `stable`).
+/// 2. Sample `s = p - 1` splitters per rank
+///    ([`sample_block_decomp`] or [`sample_arbit_decomp`] depending
+///    on whether the input is already block-decomposed).
+/// 3. Compute per-rank send counts ([`split`] or [`stable_split`]).
+/// 4. Exchange data via `MPI_Alltoallv` and re-sort the received
+///    bucket locally.
+/// 5. Re-balance into the original distribution
+///    ([`crate::distribution::stable_distribute`] for block input,
+///    [`crate::distribution::arbit_distribute`] otherwise).
+///
+/// # Arguments
+/// * `tsl` - per-rank slice to sort in place.
+/// * `compare` - ordering function.
+/// * `stable` - whether to preserve the relative order of equal
+///   elements.
+/// * `comm` - Communicator
+///
+/// # Errors
+/// Propagates errors from [`super::Error`] (sample size, splitter
+/// size, sort invariants) and from the underlying collectives /
+/// distributors.
 pub fn samplesort<T, F>(
     tsl: &mut [T],
     compare: F,

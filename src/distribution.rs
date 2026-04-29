@@ -1,3 +1,43 @@
+//! Re-distribution of a flat array between MPI processes.
+//!
+//! Given an input slice that is split across processes in some
+//! arbitrary way, the helpers in this module move elements between
+//! ranks so that the resulting layout matches a target [`Dist`]
+//! partition. Several strategies are provided, each implementing the
+//! [`Distributor`] trait:
+//!
+//! * [`Over2UnderDistributor`] - splits ranks into "over" (more than
+//!   target) and "under" (less than target) groups and transfers
+//!   elements directly from overs to unders.
+//! * [`SurplusDistributor`] - signed-surplus pairing using a FIFO of
+//!   pending surpluses/deficits to minimise total communication
+//!   volume.
+//! * [`StableDistributor`] - re-distributes while preserving the
+//!   global ordering of elements.
+//! * [`ArbitDistributor`] - re-distributes to an arbitrary per-rank
+//!   target size derived at runtime from the requested local size.
+//!
+//! Convenience free functions [`distribute_scatter`],
+//! [`stable_distribute`], [`stable_distribute_vec`],
+//! [`distribute_vec`] and [`arbit_distribute`] wrap the most common
+//! use-cases.
+
+//
+// Copyright 2026 Georgia Institute of Technology
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
 use anyhow::{Ok, Result, bail};
 use mpi::{
     collective::SystemOperation,
@@ -16,23 +56,51 @@ use crate::{
     util::Pair,
 };
 
+/// Errors produced by the distribution helpers.
 #[derive(Error, Debug)]
 pub enum Error {
+    /// The internal FIFO of surpluses ended up in an inconsistent
+    /// state during [`SurplusDistributor`] processing.
     #[error("Invalid Surplus Queue Status")]
     InvalidSurplusQError,
+    /// In [`distribute_scatter`], not all processes agreed on the
+    /// rank with the maximum number of elements (i.e. there is no
+    /// single root to scatter from).
     #[error("Invalid Root Selection")]
     InvalidRootError,
+    /// The output slice is shorter than required by the target
+    /// distribution.
     #[error("Output Slice is empty")]
     OutSliceLengthError,
+    /// No process has any input data, so distribution is impossible.
     #[error("Input Slice is empty")]
     InSliceLengthError,
+    /// In [`SurplusDistributor`], the per-rank surpluses do not sum
+    /// to zero - they cannot be balanced by re-distribution.
     #[error("Surpluses lengths don't match")]
     InvalidSurplusesError,
 }
 
+/// Scatter from the rank with the largest input slice.
 ///
-/// scatter elements from the process having the maximum number of elements to
-/// all the other processes
+/// # Description
+/// Pick the rank that holds the most elements (using
+/// [`max_element`]) and scatter its contents to all the other
+/// processes following the layout described by `part`. The total
+/// number of elements held across the communicator must equal the
+/// chosen root's `t_in.len()`; non-root ranks are expected to pass
+/// an output slice of length `part.local_size()`.
+///
+/// # Arguments
+/// * `t_in` - input slice; only meaningful at the root.
+/// * `t_out` - output slice on every rank.
+/// * `part` - target distribution describing how to split the input.
+/// * `comm` - Communicator
+///
+/// # Errors
+/// * `InvalidRootError` if processes disagree on the root.
+/// * `OutSliceLengthError` if some rank's output slice is too
+///   short.
 pub fn distribute_scatter<T>(
     t_in: &[T],
     t_out: &mut [T], // Assuming s_slice has enough size to accept data
@@ -67,27 +135,47 @@ where
     Ok(())
 }
 
+/// Common interface implemented by all distribution strategies.
 ///
-/// Trait for distributor  based on sizes
+/// # Description
+/// A `Distributor` knows how to compute the per-rank send/receive
+/// counts and displacements ([`All2allvArgs`]) required to move
+/// elements from the input layout to the target layout, and how to
+/// run the actual `MPI_Alltoallv` to perform the transfer.
 pub trait Distributor<T>
 where
     T: Equivalence + Default + Clone,
 {
-    /// Arguments to all2all
+    /// Compute the [`All2allvArgs`] (send/recv counts and
+    /// displacements) needed to re-distribute `t_in` according to
+    /// this distributor's strategy.
     fn cc_args(&self, t_in: &[T]) -> Result<All2allvArgs<isize>>;
 
+    /// Re-distribute `t_in` into `t_out` across the communicator.
+    /// `t_out` must be sized to hold the local portion of the
+    /// re-distributed array.
     fn distribute(&self, t_in: &[T], t_out: &mut [T]) -> Result<()>;
 }
 
+/// Re-distribute by transferring directly from "over" ranks to
+/// "under" ranks.
 ///
-/// Distributor implementation that divides the processes into
-/// over and under processes  and xfers from the overs to the unders.
+/// # Description
+/// Each rank's input size is compared against the target local size
+/// from `part`. Ranks that hold more than their target are
+/// "senders" (over), ranks that hold less are "receivers" (under).
+/// Senders are paired with receivers in rank order and elements are
+/// transferred in chunks so that sender `s` is fully drained before
+/// moving to the next sender, and receiver `r` is fully filled
+/// before moving to the next receiver.
 pub struct Over2UnderDistributor<'a> {
     part: &'a dyn Dist,
     comm: &'a dyn Communicator,
 }
 
 impl<'a> Over2UnderDistributor<'a> {
+    /// Construct a new `Over2UnderDistributor` for the target
+    /// partition `part` over communicator `comm`.
     pub fn new(part: &'a dyn Dist, comm: &'a dyn Communicator) -> Self {
         Self { part, comm }
     }
@@ -202,9 +290,19 @@ where
     }
 }
 
+/// Re-distribute using a signed-surplus pairing scheme.
 ///
-/// Distributor implementation that divides the processes into
-/// having positive and negative surpluses and xfers from the +ves to the -ves.
+/// # Description
+/// Each rank computes its `surplus = local_size - target_local_size`
+/// (positive = excess to send, negative = deficit to receive). A
+/// FIFO of pending surpluses/deficits is built by scanning ranks in
+/// order; matching positive and negative entries cancel each other
+/// and produce send-counts that minimise the total volume exchanged.
+///
+/// The optional `send_deficit` flag controls a tie-breaking rule
+/// during pairing (whether deficit-side processes also actively
+/// "send" an empty notification). It defaults to `true` when `None`
+/// is supplied.
 pub struct SurplusDistributor<'a> {
     part: &'a dyn Dist,
     comm: &'a dyn Communicator,
@@ -212,6 +310,13 @@ pub struct SurplusDistributor<'a> {
 }
 
 impl<'a> SurplusDistributor<'a> {
+    /// Construct a new `SurplusDistributor`.
+    ///
+    /// # Arguments
+    /// * `part` - target partition.
+    /// * `comm` - Communicator.
+    /// * `send_deficit` - optional override of the deficit-side
+    ///   pairing rule (defaults to `true`).
     pub fn new(
         part: &'a dyn Dist,
         comm: &'a dyn Communicator,
@@ -224,6 +329,15 @@ impl<'a> SurplusDistributor<'a> {
         }
     }
 
+    /// Compute per-rank send counts from the per-rank `surpluses`
+    /// vector.
+    ///
+    /// # Description
+    /// Linearly scan all ranks and pair surpluses with deficits via
+    /// a FIFO. Each pairing produces send entries on both sides
+    /// (positive surplus side sends, deficit side optionally sends
+    /// a zero-length matching). Returns the per-rank send count
+    /// vector for the local rank.
     fn surplus_send_counts(
         &self,
         surpluses: &[isize], // negative `surpluses` represents a deficit
@@ -369,14 +483,26 @@ where
     }
 }
 
+/// Re-distribute while preserving the global ordering of elements.
 ///
-/// Distributor implementation that distibutes such that the ordering is retained.
+/// # Description
+/// The local elements at each rank are conceptually concatenated in
+/// rank order to form the global array. `StableDistributor` then
+/// re-distributes that global array onto the target partition `part`
+/// without changing the relative order of elements: element with
+/// global index `g` ends up at the rank `part.owner(g)` and at local
+/// index `part.local_index(g)`.
+///
+/// This is the standard choice when the data has a meaningful order
+/// (e.g. it is sorted, or contains positional information).
 pub struct StableDistributor<'a> {
     part: &'a dyn Dist,
     comm: &'a dyn Communicator,
 }
 
 impl<'a> StableDistributor<'a> {
+    /// Construct a new `StableDistributor` for target partition
+    /// `part` over communicator `comm`.
     pub fn new(part: &'a dyn Dist, comm: &'a dyn Communicator) -> Self {
         Self { part, comm }
     }
@@ -443,14 +569,28 @@ where
     }
 }
 
+/// Re-distribute to an arbitrary, runtime-derived target layout.
 ///
-/// Distributor implementation for distibuting in a arbitrary manner.
+/// # Description
+/// The caller supplies a new desired local size on each rank. The
+/// constructor gathers these sizes via `allgather_one`, builds the
+/// implied [`ArbitDist`] target partition, and the resulting
+/// distributor re-balances the input so that every rank ends up with
+/// exactly `new_local_size` elements. The relative order of elements
+/// is preserved (stable re-distribution into an arbitrary layout).
 pub struct ArbitDistributor<'a> {
     part: ArbitDist,
     comm: &'a dyn Communicator,
 }
 
 impl<'a> ArbitDistributor<'a> {
+    /// Construct a new `ArbitDistributor` whose target partition is
+    /// derived from the per-rank `new_local_size` values.
+    ///
+    /// # Arguments
+    /// * `new_local_size` - desired number of elements on this
+    ///   process after distribution.
+    /// * `comm` - Communicator
     pub fn new(
         new_local_size: usize,
         comm: &'a dyn Communicator,
@@ -526,6 +666,17 @@ where
     }
 }
 
+/// Stable re-distribution into a caller-provided output slice.
+///
+/// # Description
+/// Convenience wrapper that constructs a [`StableDistributor`] and
+/// runs it. `t_out` must be sized to `part.local_size()`.
+///
+/// # Arguments
+/// * `t_in` - input slice held by the calling process.
+/// * `t_out` - output slice on the calling process.
+/// * `part` - target partition.
+/// * `comm` - Communicator
 pub fn stable_distribute<T>(
     t_in: &[T],
     t_out: &mut [T],
@@ -538,6 +689,20 @@ where
     StableDistributor::new(part, comm).distribute(t_in, t_out)
 }
 
+/// Stable re-distribution returning a freshly allocated `Vec<T>`.
+///
+/// # Description
+/// Allocates an output vector of length `part.local_size()` and runs
+/// a [`StableDistributor`]. When the communicator has a single
+/// process, returns a copy of the input.
+///
+/// # Arguments
+/// * `tv` - input slice held by the calling process.
+/// * `part` - target partition.
+/// * `comm` - Communicator
+///
+/// # Returns
+/// A `Vec<T>` containing the locally owned slice after distribution.
 // Container stable_distribute(const Container& c, const mxx::comm& comm) {
 pub fn stable_distribute_vec<T>(
     tv: &[T],
@@ -558,6 +723,22 @@ where
     Ok(result)
 }
 
+/// Re-distribute into a freshly allocated `Vec<T>` (stable).
+///
+/// # Description
+/// Same behaviour as [`stable_distribute_vec`] - currently
+/// implemented on top of [`StableDistributor`]. Provided as a
+/// shorthand when callers do not care about the specific strategy
+/// and just want each rank to end up with `part.local_size()`
+/// elements in global order.
+///
+/// # Arguments
+/// * `tv` - input slice held by the calling process.
+/// * `part` - target partition.
+/// * `comm` - Communicator
+///
+/// # Returns
+/// A `Vec<T>` containing the locally owned slice after distribution.
 pub fn distribute_vec<T>(
     tv: &[T],
     part: &impl Dist,
@@ -577,6 +758,20 @@ where
     Ok(result)
 }
 
+/// Arbitrary re-distribution to a per-rank target size.
+///
+/// # Description
+/// Convenience wrapper that constructs an [`ArbitDistributor`] from
+/// `target_local_size` and runs it. After completion every rank
+/// holds exactly `target_local_size` elements in `t_out`.
+///
+/// # Arguments
+/// * `t_in` - input slice held by the calling process.
+/// * `t_out` - output slice on the calling process; must be at least
+///   `target_local_size` long.
+/// * `target_local_size` - desired number of elements at this rank
+///   after distribution.
+/// * `comm` - Communicator
 pub fn arbit_distribute<T>(
     t_in: &[T],
     t_out: &mut [T], // Assuming t_out has enough size to accept data

@@ -1,5 +1,25 @@
-//! MPI broadcast functions
-//! Broadcast a value or a vector.
+//! Typed MPI broadcast helpers.
+//!
+//! Wrappers around `MPI_Bcast` that accept Rust scalars, slices and
+//! `Vec`s instead of raw datatype handles. There are three flavours,
+//! covering the most common patterns:
+//!
+//! * [`bcast_one_ref`] - lowest-level helper. Both root and
+//!   non-root ranks pass a mutable reference; the root's value is
+//!   broadcast in place to every rank.
+//! * [`bcast_one`] / [`bcast_vec`] - "optional" inputs: the root
+//!   passes `Some(value)` and every other rank passes `None`. The
+//!   helper returns the broadcast value on every rank. For
+//!   [`bcast_vec`] the slice length is broadcast first (using
+//!   [`bcast_one`]) so non-root ranks can allocate a buffer of the
+//!   correct size.
+//! * [`bcast`] - in-place broadcast over a caller-supplied slice
+//!   that must already be the same length on every rank.
+//!
+//! All helpers validate their inputs collectively across the
+//! communicator (using [`crate::reduction::any_of`] /
+//! [`crate::reduction::all_same`]) before calling into `rsmpi`, and
+//! return `anyhow::Result<...>` with a typed [`Error`] on failure.
 
 //
 // Copyright 2026 Georgia Institute of Technology
@@ -22,42 +42,43 @@ use anyhow::{Ok, Result, bail};
 use mpi::traits::{Communicator, Equivalence, Root};
 use thiserror::Error;
 
-/// Represents possible errors during broadcast.
+/// Errors raised by the broadcast helpers.
 #[derive(Error, Debug)]
 pub enum Error {
-    // Output Slice is less than expected
+    /// The supplied output slice is shorter than the broadcast
+    /// length.
     #[error("Output Slice Length:: Expected {0}, Found {1}")]
     OutSliceLengthError(usize, usize),
-    // Input Slice is doesn't match expected length
+    /// The supplied input slice does not match the expected length
+    /// (e.g. ranks disagree on the slice length passed to
+    /// [`bcast`]).
     #[error("Input Slice Error:: {0}")]
     InSliceError(String),
-    // General Input Error
+    /// Generic input precondition failure (typically: the root
+    /// rank's input is `None` for [`bcast_one`] / [`bcast_vec`]).
     #[error("Input Error:: {0}")]
     InputError(String),
 }
 
-/// Broadcast one element via reference.
+/// Broadcast one element through a mutable reference.
 ///
 /// # Description
-/// Broadcast the value refered at the root process and write to 
-/// the reference to the output reference everywhere.  
+/// On entry, `s_inout` holds the value to broadcast on the root
+/// rank and is undefined elsewhere. On exit, every rank sees the
+/// same value as the root. This is the lowest-level wrapper and
+/// performs no input validation; prefer [`bcast_one`] for the
+/// `Option`-based API.
 ///
 /// # Arguments
-/// * `s_inout` - mutable reference input at the root, output everywhere.
-/// * `root` - root process to broadcast from
+/// * `s_inout` - mutable reference; input at the root, output
+///   everywhere.
+/// * `root` - rank to broadcast from.
 /// * `comm` - Communicator
-///
-/// # Returns
-/// None
 ///
 /// # Examples
 /// \```
-/// let c = crate::comm::WorldComm::init()
-/// let mut bvalue: usize = if rank == 0 {
-///    12
-/// else {
-///    0
-/// };
+/// let c = crate::comm::WorldComm::init();
+/// let mut bvalue: usize = if c.rank == 0 { 12 } else { 0 };
 /// bcast_one_ref(&mut bvalue, 0, &c.comm);
 /// assert_eq!(bvalue, 12);
 /// \```
@@ -72,30 +93,27 @@ pub fn bcast_one_ref<T>(
     root_process.broadcast_into(s_inout);
 }
 
-/// Broadcast one element.
+/// Broadcast one element using an `Option`-based API.
 ///
 /// # Description
-/// Broadcast one element, input is Some(T) at the root, None everywhere.
+/// On the root rank, `s_in` must be `Some(value)`; on every other
+/// rank it must be `None`. Returns `value` on every rank.
 ///
 /// # Arguments
-/// * `s_in` - Some(T) at the root, None everywhere.
-/// * `root` - root process to broadcast from
+/// * `s_in` - `Some(T)` at the root, `None` everywhere else.
+/// * `root` - rank to broadcast from.
 /// * `comm` - Communicator
 ///
 /// # Returns
-/// broadcasted T or Error with Result<T> 
+/// The broadcast `T`, identical on every rank.
 ///
 /// # Errors
-/// Retuns InputError if root pocess has None input.
+/// [`Error::InputError`] when the root rank passes `None`.
 ///
 /// # Examples
 /// \```
-/// let c = crate::comm::WorldComm::init()
-/// let bvalue: Option<usize> = if rank == 0 {
-///    Some(12)
-/// else {
-///    None
-/// };
+/// let c = crate::comm::WorldComm::init();
+/// let bvalue: Option<usize> = if c.rank == 0 { Some(12) } else { None };
 /// let result = bcast_one(bvalue, 0, &c.comm)?;
 /// assert_eq!(result, 12);
 /// \```
@@ -121,36 +139,32 @@ where
     Ok(t_inout)
 }
 
-/// Broadcast a slice from the root process to all the processes.
+/// Broadcast a slice in place from the root rank to every rank.
 ///
 /// # Description
-/// Broadcast a slice from the root process to all the processes. Slice serves
-///  as both the input and output.
+/// `s_inout` serves as the input on the root rank and as the
+/// output on every rank. All ranks must pass a slice of the same
+/// length (this is checked collectively via
+/// [`crate::reduction::all_same`]).
 ///
 /// # Arguments
-/// * `s_inout` - Slice of T, serves as input at root process and output everywhere
-/// * `root` - root process to broadcast from
+/// * `s_inout` - slice; input at the root rank, output everywhere.
+/// * `root` - rank to broadcast from.
 /// * `comm` - Communicator
 ///
-/// # Returns
-/// Error Result.
-///
 /// # Errors
-/// Retuns InputError if the all the processes have different inout length.
+/// [`Error::InputError`] when ranks disagree on the slice length.
 ///
 /// # Examples
 /// \```
-/// let c = crate::comm::WorldComm::init()
-/// let result = if rank == 0 {
-///    let mut data = vec![1, 2, 3];
-///    bcast(&mut data, 0, &c.comm)
-///    data
+/// let c = crate::comm::WorldComm::init();
+/// let mut data: Vec<i32> = if c.rank == 0 {
+///     vec![1, 2, 3]
 /// } else {
-///    let mut data = vec![0, 0, 0];
-///    bcast(&mut data, 0, &c.comm)
-///    data
+///     vec![0, 0, 0]
 /// };
-/// assert_eq!(result, Some(vec![1, 2, 3]));
+/// bcast(&mut data, 0, &c.comm)?;
+/// assert_eq!(data, vec![1, 2, 3]);
 /// \```
 pub fn bcast<T>(
     s_inout: &mut [T], // Assuming s_out has enough size to accept data
@@ -162,7 +176,8 @@ where
 {
     if !all_same(&s_inout.len(), comm) {
         bail!(Error::InputError(
-            "bcast_one input size should be all same.".to_string()
+            "bcast input slice length should be the same on every rank."
+                .to_string()
         ))
     }
     // TODO:: handle large sizes
@@ -171,33 +186,39 @@ where
     Ok(())
 }
 
-/// Broadcast a vector from the root process to all the processes.
+/// Broadcast a slice from the root rank, returning a `Vec<T>`.
 ///
 /// # Description
-/// Broadcast is an option where input is at the root process, and 
-/// None everywhere.
+/// On the root rank `s_in` must be `Some(slice)`; on every other
+/// rank it must be `None`. The slice length is broadcast first
+/// (using [`bcast_one`]) so that non-root ranks can allocate a
+/// receive buffer of the correct size; the contents are then
+/// broadcast with [`bcast`]. The resulting `Vec<T>` is returned on
+/// every rank.
 ///
 /// # Arguments
-/// * `s_in` - Optional Slice of T, Can not be None at root process 
-/// * `root` - root process to broadcast from
+/// * `s_in` - `Some(slice)` at the root rank, `None` everywhere
+///   else.
+/// * `root` - rank to broadcast from.
 /// * `comm` - Communicator
 ///
 /// # Returns
-/// Broadcasted vector.
+/// A `Vec<T>` containing the broadcast slice, identical on every
+/// rank.
 ///
 /// # Errors
-/// Retuns InputError if the root process has None input.
+/// [`Error::InputError`] when the root rank passes `None`.
 ///
 /// # Examples
 /// \```
-/// let c = crate::comm::WorldComm::init()
-/// let result = if rank == 0 {
-///    let data = vec![1, 2, 3];
-///    bcast_vec(Some(&data), 0, &c.comm)
+/// let c = crate::comm::WorldComm::init();
+/// let result = if c.rank == 0 {
+///     let data = vec![1, 2, 3];
+///     bcast_vec(Some(&data), 0, &c.comm)?
 /// } else {
-///    bcast_vec(None, 0, &c.comm)
+///     bcast_vec::<i32>(None, 0, &c.comm)?
 /// };
-/// assert_eq!(result, Some(vec![1, 2, 3]));
+/// assert_eq!(result, vec![1, 2, 3]);
 /// \```
 pub fn bcast_vec<T>(
     s_in: Option<&[T]>,
@@ -209,7 +230,7 @@ where
 {
     if !any_of(comm.rank() == root && s_in.is_some(), comm) {
         bail!(Error::InputError(
-            "bcast_one input @ root is None.".to_string()
+            "bcast_vec input @ root is None.".to_string()
         ))
     }
     let n = bcast_one(s_in.map(|x| x.len()), root, comm)?;
