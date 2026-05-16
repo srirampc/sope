@@ -6,8 +6,8 @@ readme = "README.md"
 repository = "https://github.com/srirampc/sope"
 license = "Apache-2.0"
 description = "Simplified, and type-safe interface to MPI with error handling"
-# TODO:: Add documentation and create homepage
-documentation = "https://github.com/srirampc/sope"
+# TODO:: Create homepage
+documentation = "https://docs.rs/sope/latest/sope/"
 homepage = "https://github.com/srirampc/sope"
 
 [workspace]
