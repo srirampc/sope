@@ -19,7 +19,7 @@
 //! All helpers validate their inputs collectively across the
 //! communicator (using [`crate::reduction::any_of`] /
 //! [`crate::reduction::all_same`]) before calling into `rsmpi`, and
-//! return `anyhow::Result<...>` with a typed [`Error`] on failure.
+//! return `anyhow::Result<...>` with a typed [`enum@Error`] on failure.
 
 //
 // Copyright 2026 Georgia Institute of Technology
@@ -111,12 +111,12 @@ pub fn bcast_one_ref<T>(
 /// [`Error::InputError`] when the root rank passes `None`.
 ///
 /// # Examples
-/// \```
+/// ```
 /// let c = crate::comm::WorldComm::init();
 /// let bvalue: Option<usize> = if c.rank == 0 { Some(12) } else { None };
 /// let result = bcast_one(bvalue, 0, &c.comm)?;
 /// assert_eq!(result, 12);
-/// \```
+/// ```
 pub fn bcast_one<T>(
     s_in: Option<T>,
     root: i32,
@@ -156,7 +156,7 @@ where
 /// [`Error::InputError`] when ranks disagree on the slice length.
 ///
 /// # Examples
-/// \```
+/// ```
 /// let c = crate::comm::WorldComm::init();
 /// let mut data: Vec<i32> = if c.rank == 0 {
 ///     vec![1, 2, 3]
@@ -165,7 +165,7 @@ where
 /// };
 /// bcast(&mut data, 0, &c.comm)?;
 /// assert_eq!(data, vec![1, 2, 3]);
-/// \```
+/// ```
 pub fn bcast<T>(
     s_inout: &mut [T], // Assuming s_out has enough size to accept data
     root: i32,
@@ -210,7 +210,7 @@ where
 /// [`Error::InputError`] when the root rank passes `None`.
 ///
 /// # Examples
-/// \```
+/// ```
 /// let c = crate::comm::WorldComm::init();
 /// let result = if c.rank == 0 {
 ///     let data = vec![1, 2, 3];
@@ -219,7 +219,7 @@ where
 ///     bcast_vec::<i32>(None, 0, &c.comm)?
 /// };
 /// assert_eq!(result, vec![1, 2, 3]);
-/// \```
+/// ```
 pub fn bcast_vec<T>(
     s_in: Option<&[T]>,
     root: i32,

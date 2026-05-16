@@ -6,13 +6,13 @@
 //!   Requires every process to hold the same number of elements; the
 //!   total work and communication match the classical bitonic-sort
 //!   network.
-//! * [`samplesort`] - parallel sample sort (in [`samplesort`]). Picks
-//!   `p - 1` global splitters by sampling every rank, partitions the
+//! * [`samplesort::samplesort`] - parallel sample sort (in [`mod@samplesort`]).
+//!   Picks `p - 1` global splitters by sampling every rank, partitions the
 //!   data into `p` buckets and exchanges them with a single
 //!   `MPI_Alltoallv`.
 //!
 //! Convenience wrappers ([`sort`], [`sort_by`], [`stable_sort`],
-//! [`stable_sort_by`]) sit on top of [`samplesort`] and select the
+//! [`stable_sort_by`]) sit on top of [`mod@samplesort`] and select the
 //! stable / unstable mode of the underlying local sort.
 //!
 //! Distributed [`is_sorted`] / [`is_sorted_by`] predicates check that
@@ -68,7 +68,7 @@ pub enum Error {
     #[error("Splitter Size Error : {0} ")]
     SplitterSizeError(String),
     /// The total input size across all ranks is not large enough to
-    /// pick the requested number of samples in [`samplesort`].
+    /// pick the requested number of samples in [`samplesort::samplesort`].
     #[error("Insufficient Sample Size")]
     SampleSizeError,
     /// An internal invariant of the sort algorithm did not hold;
@@ -142,8 +142,8 @@ pub use samplesort::samplesort;
 /// Distributed sort with a custom comparator (unstable).
 ///
 /// # Description
-/// Sorts `tsl` across the communicator using [`samplesort`] with the
-/// `stable` flag set to `false`. Local sorting falls back to
+/// Sorts `tsl` across the communicator using [`samplesort::samplesort`] with
+/// the `stable` flag set to `false`. Local sorting falls back to
 /// [`slice::sort_unstable_by`].
 ///
 /// # Arguments
@@ -180,10 +180,10 @@ where
 /// Distributed stable sort with a custom comparator.
 ///
 /// # Description
-/// Sorts `tsl` across the communicator using [`samplesort`] with the
-/// `stable` flag set to `true`. Local sorting uses
+/// Sorts `tsl` across the communicator using [`samplesort::samplesort`] with
+/// the `stable` flag set to `true`. Local sorting uses
 /// [`slice::sort_by`] and equal splitters are routed to a
-/// deterministic destination (see [`samplesort`]'s `stable_split`).
+/// deterministic destination (see [`mod@samplesort`]'s `stable_split`).
 ///
 /// # Arguments
 /// * `tsl` - per-rank slice to stable sort in place.

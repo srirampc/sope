@@ -2,7 +2,8 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{Data, DeriveInput, Fields, GenericParam, Generics, parse_macro_input};
 
-/// Derive macro for automatically implementing MPI Equivalence trait
+/// Derive macro for automatically implementing MPI Equivalence trait that
+/// works with generic types.
 ///
 /// # Example
 /// ```ignore

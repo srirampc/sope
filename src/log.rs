@@ -42,7 +42,7 @@
 use std::fmt::{Debug, Display};
 use thiserror::Error;
 
-/// Error payload produced by the [`ensure!`] / [`ensure_eq!`] macros.
+/// Error payload produced by the [`crate::ensure!`] / [`crate::ensure_eq!`] macros.
 ///
 /// # Description
 /// `EnsureError` records the source file (`F`), line (`T`) and -
@@ -53,10 +53,10 @@ use thiserror::Error;
 /// resulting error message.
 #[derive(Error, Debug)]
 pub enum EnsureError<F: Debug + Display, T: Debug + Display, L: Debug, R: Debug> {
-    /// Plain "condition was false" failure raised by [`ensure!`].
+    /// Plain "condition was false" failure raised by [`crate::ensure!`].
     #[error("ensure failed at {0}:{1}")]
     C(F, T, L, R),
-    /// "Left != Right" failure raised by [`ensure_eq!`].
+    /// "Left != Right" failure raised by [`crate::ensure_eq!`].
     #[error(
         "ensure `left == right` failed at {0}:{1} :: left:({2:?}), right:({3:?})"
     )]

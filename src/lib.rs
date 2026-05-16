@@ -97,7 +97,7 @@ where
         }
     }
 
-    /// Creates an All2allvArgs<i32> object from the existing object
+    /// Creates an `All2allvArgs<i32>` object from the existing object
     pub fn to_i32(&self) -> All2allvArgs<i32> {
         All2allvArgs::<i32> {
             rcv_cts: self.rcv_cts.iter().map(|x| x.to_i32().unwrap()).collect(),
@@ -107,7 +107,7 @@ where
         }
     }
 
-    /// Creates an All2allvArgs<usize> object from the existing object
+    /// Creates an `All2allvArgs<usize>` object from the existing object
     pub fn to_usize(&self) -> All2allvArgs<usize> {
         All2allvArgs::<usize> {
             rcv_cts: self.rcv_cts.iter().map(|x| x.to_usize().unwrap()).collect(),

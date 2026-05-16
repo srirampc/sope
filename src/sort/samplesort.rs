@@ -419,7 +419,7 @@ where
 /// * `comm` - Communicator
 ///
 /// # Errors
-/// Propagates errors from [`super::Error`] (sample size, splitter
+/// Propagates errors from [`enum@super::Error`] (sample size, splitter
 /// size, sort invariants) and from the underlying collectives /
 /// distributors.
 pub fn samplesort<T, F>(

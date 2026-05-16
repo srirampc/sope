@@ -2,8 +2,8 @@
 //!
 //! Contains:
 //!
-//! * [`Pair`] - a small two-field struct that derives [`Equivalence`]
-//!   so it can be exchanged through MPI.
+//! * [`Pair`] - a small two-field struct that derives
+//!   [`mpi::traits::Equivalence`] so it can be exchanged through MPI.
 //! * Inclusive and exclusive prefix-sum iterators / collectors used to
 //!   build offset / displacement arrays for variable-length collectives.
 //! * [`which_itr`] - filter an iterator returning the indices of the
@@ -36,7 +36,7 @@ use std::{
     ops::{AddAssign, Mul},
 };
 
-/// Two-field tuple-like struct usable as an MPI [`Equivalence`] type.
+/// Two-field tuple-like struct usable as an MPI [`mpi::traits::Equivalence`] type.
 ///
 /// # Description
 /// `Pair` is a generic ordered pair `(first, second)`. The
@@ -135,10 +135,10 @@ impl<T1: Default, T2: Default> Default for Pair<T1, T2> {
 /// A collection `SeqT` of the inclusive prefix sums, in iteration order.
 ///
 /// # Examples
-/// \```
+/// ```ignore
 /// let v: Vec<i32> = inc_prefix_sum(vec![1, 2, 3].into_iter(), 1);
 /// assert_eq!(v, vec![1, 3, 6]);
-/// \```
+/// ```
 pub fn inc_prefix_sum<ItrT, T, SeqT>(in_itr: ItrT, scale: T) -> SeqT
 where
     ItrT: Iterator<Item = T>,
@@ -222,10 +222,10 @@ where
 /// A collection `SeqT` of the exclusive prefix sums, in iteration order.
 ///
 /// # Examples
-/// \```
+/// ```
 /// let v: Vec<i32> = exc_prefix_sum(vec![1, 2, 3].into_iter(), 1);
 /// assert_eq!(v, vec![0, 1, 3]);
-/// \```
+/// ```
 pub fn exc_prefix_sum<ItrT, T, SeqT>(in_itr: ItrT, scale: T) -> SeqT
 where
     ItrT: Iterator<Item = T>,
@@ -251,11 +251,11 @@ where
 /// A lazy iterator over the matching indices.
 ///
 /// # Examples
-/// \```
+/// ```
 /// let v = vec![1, 2, 3, 4];
 /// let idx: Vec<usize> = which_itr(v.iter(), &|x| *x % 2 == 0).collect();
 /// assert_eq!(idx, vec![1, 3]);
-/// \```
+/// ```
 pub fn which_itr<T, F>(
     in_itr: Iter<'_, T>,
     predicate: &F,
@@ -310,7 +310,7 @@ where
 ///
 /// # Description
 /// Convenience wrapper around [`equal_range_by`] that uses
-/// [`T::cmp`] as the comparator. `s[begin..]` must be sorted in
+/// `T::cmp` as the comparator. `s[begin..]` must be sorted in
 /// ascending order.
 ///
 /// # Returns
@@ -318,11 +318,11 @@ where
 /// `s`.
 ///
 /// # Examples
-/// \```
+/// ```
 /// let v = vec![1, 2, 2, 3, 4];
 /// let r = equal_range(&v, 0, &2);
 /// assert_eq!(r.to_tuple(), (1, 3));
-/// \```
+/// ```
 pub fn equal_range<T, F>(s: &[T], begin: usize, value: &T) -> Pair<usize, usize>
 where
     T: Default + Clone + Ord,
