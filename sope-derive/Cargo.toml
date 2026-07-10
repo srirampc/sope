@@ -6,8 +6,8 @@ readme = "README.md"
 repository = "https://github.com/srirampc/sope"
 license = "Apache-2.0"
 description = "Derive macros for sope library"
-# TODO:: Create homepage
 documentation = "https://docs.rs/sope_derive/latest/sope_derive/"
+# TODO:: Create homepage
 homepage = "https://github.com/srirampc/sope"
 
 
